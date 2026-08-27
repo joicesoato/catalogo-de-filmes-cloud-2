@@ -1,0 +1,17 @@
+{
+  "name": "catalogo-filmes-tom-hanks",
+  "version": "1.0.0",
+  "description": "Catálogo de filmes do Tom Hanks com TMDB, login, favoritos e comentários",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.2",
+    "dotenv": "^17.4.2",
+    "express": "^5.1.0",
+    "express-session": "^1.18.2",
+    "mysql2": "^3.14.3"
+  }
+}
