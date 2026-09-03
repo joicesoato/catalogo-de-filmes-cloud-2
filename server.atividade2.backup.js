@@ -139,76 +139,130 @@ async function buscarTomHanks() {
 }
 
 // ===============================
-// AUTENTICAÇÃO — MICROSSERVIÇO
+// CADASTRO
 // ===============================
 
-const AUTH_SERVICE_URL =
-  process.env.AUTH_SERVICE_URL || "http://auth-service:3001";
-
-// CADASTRO
 app.post("/api/auth/register", async (req, res) => {
   try {
-    const resposta = await fetch(`${AUTH_SERVICE_URL}/register`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(req.body)
-    });
+    const { nome, email, senha } = req.body;
 
-    const dados = await resposta.json();
-
-    if (!resposta.ok) {
-      return res.status(resposta.status).json(dados);
+    if (!nome || !email || !senha) {
+      return res.status(400).json({
+        erro: "Nome, email e senha são obrigatórios."
+      });
     }
+
+    if (senha.length < 6) {
+      return res.status(400).json({
+        erro: "A senha precisa ter pelo menos 6 caracteres."
+      });
+    }
+
+    const emailNormalizado = email.trim().toLowerCase();
+
+    const [usuarios] = await pool.execute(
+      "SELECT id FROM usuarios WHERE email = ?",
+      [emailNormalizado]
+    );
+
+    if (usuarios.length > 0) {
+      return res.status(409).json({
+        erro: "Este email já está cadastrado."
+      });
+    }
+
+    const senhaHash = await bcrypt.hash(senha, 10);
+
+    const [resultado] = await pool.execute(
+      `INSERT INTO usuarios (nome, email, senha_hash)
+       VALUES (?, ?, ?)`,
+      [nome.trim(), emailNormalizado, senhaHash]
+    );
+
+    req.session.usuario = {
+      id: resultado.insertId,
+      nome: nome.trim(),
+      email: emailNormalizado
+    };
 
     res.status(201).json({
-      mensagem: dados.mensagem,
-      usuario: dados.usuario
-    });
-
-  } catch (erro) {
-    console.error("Erro ao chamar auth-service:", erro);
-
-    res.status(503).json({
-      erro: "Serviço de autenticação indisponível."
-    });
-  }
-});
-
-// LOGIN
-app.post("/api/auth/login", async (req, res) => {
-  try {
-    const resposta = await fetch(`${AUTH_SERVICE_URL}/login`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(req.body)
-    });
-
-    const dados = await resposta.json();
-
-    if (!resposta.ok) {
-      return res.status(resposta.status).json(dados);
-    }
-
-    req.session.usuario = dados.usuario;
-
-    res.json({
-      mensagem: dados.mensagem,
+      mensagem: "Cadastro realizado com sucesso.",
       usuario: req.session.usuario
     });
   } catch (erro) {
-    console.error("Erro ao chamar auth-service:", erro);
+    console.error("Erro no cadastro:", erro);
 
-    res.status(503).json({
-      erro: "Serviço de autenticação indisponível."
+    res.status(500).json({
+      erro: "Erro interno ao realizar cadastro."
     });
   }
 });
 
+// ===============================
+// LOGIN
+// ===============================
+
+app.post("/api/auth/login", async (req, res) => {
+  try {
+    const { email, senha } = req.body;
+
+    if (!email || !senha) {
+      return res.status(400).json({
+        erro: "Email e senha são obrigatórios."
+      });
+    }
+
+    const emailNormalizado = email.trim().toLowerCase();
+
+    const [usuarios] = await pool.execute(
+      `SELECT id, nome, email, senha_hash
+       FROM usuarios
+       WHERE email = ?`,
+      [emailNormalizado]
+    );
+
+    if (usuarios.length === 0) {
+      return res.status(401).json({
+        erro: "Email ou senha incorretos."
+      });
+    }
+
+    const usuario = usuarios[0];
+
+    const senhaValida = await bcrypt.compare(
+      senha,
+      usuario.senha_hash
+    );
+
+    if (!senhaValida) {
+      return res.status(401).json({
+        erro: "Email ou senha incorretos."
+      });
+    }
+
+    req.session.usuario = {
+      id: usuario.id,
+      nome: usuario.nome,
+      email: usuario.email
+    };
+
+    res.json({
+      mensagem: "Login realizado com sucesso.",
+      usuario: req.session.usuario
+    });
+  } catch (erro) {
+    console.error("Erro no login:", erro);
+
+    res.status(500).json({
+      erro: "Erro interno ao realizar login."
+    });
+  }
+});
+
+// ===============================
 // LOGOUT
+// ===============================
+
 app.post("/api/auth/logout", (req, res) => {
   req.session.destroy((erro) => {
     if (erro) {
@@ -227,7 +281,10 @@ app.post("/api/auth/logout", (req, res) => {
   });
 });
 
+// ===============================
 // USUÁRIO LOGADO
+// ===============================
+
 app.get("/api/auth/me", (req, res) => {
   if (!req.session.usuario) {
     return res.json({
@@ -239,85 +296,6 @@ app.get("/api/auth/me", (req, res) => {
     logado: true,
     usuario: req.session.usuario
   });
-});
-
-app.get("/api/auth/verify-email", async (req, res) => {
-  try {
-    const token = req.query.token;
-
-    if (!token) {
-      return res.status(400).send("Token não informado.");
-    }
-
-    const resposta = await fetch(
-      `${AUTH_SERVICE_URL}/verify-email?token=${encodeURIComponent(token)}`
-    );
-
-    if (!resposta.ok) {
-      const texto = await resposta.text();
-      return res.status(resposta.status).send(texto);
-    }
-
-    const appUrl = process.env.APP_URL || "/";
-
-    res.redirect(`${appUrl}/?verified=1`);
-
-  } catch (erro) {
-    console.error("Erro na verificação:", erro);
-    res.status(500).send("Erro ao verificar e-mail.");
-  }
-});
-
-// ESQUECI A SENHA
-app.post("/api/auth/forgot-password", async (req, res) => {
-  try {
-    const resposta = await fetch(
-      `${AUTH_SERVICE_URL}/forgot-password`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(req.body)
-      }
-    );
-
-    const dados = await resposta.json();
-
-    res.status(resposta.status).json(dados);
-  } catch (erro) {
-    console.error("Erro ao chamar recuperação:", erro);
-
-    res.status(503).json({
-      erro: "Serviço de autenticação indisponível."
-    });
-  }
-});
-
-// REDEFINIR SENHA
-app.post("/api/auth/reset-password", async (req, res) => {
-  try {
-    const resposta = await fetch(
-      `${AUTH_SERVICE_URL}/reset-password`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(req.body)
-      }
-    );
-
-    const dados = await resposta.json();
-
-    res.status(resposta.status).json(dados);
-  } catch (erro) {
-    console.error("Erro ao redefinir senha:", erro);
-
-    res.status(503).json({
-      erro: "Serviço de autenticação indisponível."
-    });
-  }
 });
 
 // ===============================
@@ -611,45 +589,4 @@ app.listen(PORT, async () => {
   console.log(`Site disponível em http://localhost:${PORT}`);
 
   await testarBanco();
-});
-
-// ===============================
-// PROXY DAS IMAGENS DA TMDB
-// ===============================
-
-app.get("/api/poster", async (req, res) => {
-  try {
-    const path = req.query.path;
-
-    if (!path) {
-      return res.status(400).send("Imagem não informada.");
-    }
-
-    const token = process.env.TMDB_API_KEY;
-
-    const resposta = await fetch(
-      `https://image.tmdb.org/t/p/w500${path}`,
-      {
-        headers: {
-          Authorization: `Bearer ${token}`
-        }
-      }
-    );
-
-    if (!resposta.ok) {
-      return res.status(resposta.status).send("Não foi possível carregar a imagem.");
-    }
-
-    const contentType = resposta.headers.get("content-type");
-
-    res.setHeader("Content-Type", contentType || "image/jpeg");
-
-    const buffer = Buffer.from(await resposta.arrayBuffer());
-
-    res.send(buffer);
-
-  } catch (erro) {
-    console.error("Erro ao carregar poster:", erro);
-    res.status(500).send("Erro ao carregar imagem.");
-  }
 });

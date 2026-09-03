@@ -111,7 +111,11 @@ registerForm.addEventListener(
         throw new Error(data.erro);
       }
 
-      await iniciarAplicacao(data.usuario);
+      registerMessage.textContent =
+        data.mensagem ||
+        "Cadastro realizado! Verifique seu e-mail para ativar sua conta.";
+
+      registerForm.reset();
 
     } catch (erro) {
 
@@ -120,7 +124,6 @@ registerForm.addEventListener(
     }
   }
 );
-
 
 // =====================================
 // LOGIN
@@ -307,7 +310,7 @@ function renderizarFilmes() {
               filme.poster
                 ? `<img
                     class="movie-poster"
-                    src="${filme.poster}"
+                    src="/api/poster?path=${encodeURIComponent(filme.poster_path)}"
                     alt="Pôster de ${escapeHtml(filme.titulo)}"
                   >`
                 : `<div class="movie-poster"></div>`
@@ -879,3 +882,45 @@ function escapeHtml(valor) {
 // =====================================
 
 verificarSessao();
+
+// ===============================
+// RECUPERAÇÃO DE SENHA
+// ===============================
+
+const forgotPasswordButton = document.getElementById("forgot-password-button");
+
+if (forgotPasswordButton) {
+  forgotPasswordButton.addEventListener("click", async () => {
+    const email = prompt("Digite o e-mail cadastrado:");
+
+    if (!email) {
+      return;
+    }
+
+    try {
+      forgotPasswordButton.disabled = true;
+      forgotPasswordButton.textContent = "Enviando...";
+
+      const resposta = await fetch("/api/auth/forgot-password", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          email: email.trim().toLowerCase()
+        })
+      });
+
+      const dados = await resposta.json();
+
+      alert(dados.mensagem || dados.erro);
+
+    } catch (erro) {
+      console.error("Erro na recuperação:", erro);
+      alert("Não foi possível solicitar a recuperação de senha.");
+    } finally {
+      forgotPasswordButton.disabled = false;
+      forgotPasswordButton.textContent = "Esqueci minha senha";
+    }
+  });
+}

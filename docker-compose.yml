@@ -1,13 +1,38 @@
 services:
   app:
     build: .
+    env_file:
+      - .env
     environment:
-      DB_HOST: ${DB_HOST}
-      DB_PORT: ${DB_PORT:-3306}
-      DB_USER: ${DB_USER}
-      DB_PASSWORD: ${DB_PASSWORD}
-      DB_NAME: ${DB_NAME}
       PORT: 3000
+      AUTH_SERVICE_URL: http://auth-service:3001
     ports:
-      - "8211:3000"
+      - "3000:3000"
+    depends_on:
+      - auth-service
     restart: "no"
+
+  auth-service:
+    build: ./auth-service
+    env_file:
+      - .env
+    environment:
+      AUTH_PORT: 3001
+    depends_on:
+      - db
+    restart: "no"
+
+  db:
+    image: mariadb:11
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD}
+      MYSQL_DATABASE: ${DB_NAME}
+      MYSQL_USER: ${DB_USER}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    restart: "no"
+
+volumes:
+  mysql_data:
