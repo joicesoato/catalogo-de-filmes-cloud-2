@@ -180,12 +180,12 @@ app.post("/reset-password", async (req, res) => {
 
     if (!token || !novaSenha) {
       return res.status(400).json({
-        erro: "Token e nova senha são obrigatórios.",
+        erro: "Token e nova senha são obrigatórios."
       });
     }
 
-    const [tokens] = await db.query(
-      `SELECT id, usuario_id
+    const [tokens] = await pool.execute(
+      `SELECT usuario_id
        FROM reset_tokens
        WHERE token = ?
        AND usado = FALSE
@@ -195,35 +195,31 @@ app.post("/reset-password", async (req, res) => {
 
     if (tokens.length === 0) {
       return res.status(400).json({
-        erro: "Token inválido, expirado ou já utilizado.",
+        erro: "Token inválido, expirado ou já utilizado."
       });
     }
 
-    const resetToken = tokens[0];
+    const reset = tokens[0];
 
-    const senha_hash = await bcrypt.hash(novaSenha, 10);
+    const senhaHash = await bcrypt.hash(novaSenha, 10);
 
-    await db.query(
+    await pool.execute(
       "UPDATE usuarios SET senha_hash = ? WHERE id = ?",
-      [senha_hash, resetToken.usuario_id]
+      [senhaHash, reset.usuario_id]
     );
 
-    await db.query(
-      "UPDATE reset_tokens SET usado = TRUE WHERE id = ?",
-      [resetToken.id]
+    await pool.execute(
+      "UPDATE reset_tokens SET usado = TRUE WHERE token = ?",
+      [token]
     );
 
     res.json({
-      mensagem: "Senha alterada com sucesso.",
+      mensagem: "Senha alterada com sucesso."
     });
-  } catch (error) {
-    console.error("Erro ao redefinir senha:", error);
+  } catch (erro) {
+    console.error("Erro ao redefinir senha:", erro);
     res.status(500).json({
-      erro: "Erro ao redefinir senha.",
+      erro: "Erro ao redefinir senha."
     });
   }
-});
-
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Auth Service disponível na porta ${PORT}`);
 });

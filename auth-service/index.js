@@ -367,7 +367,7 @@ app.post("/reset-password", async (req, res) => {
     }
 
     const [tokens] = await pool.execute(
-      `SELECT id, usuario_id
+      `SELECT usuario_id
        FROM reset_tokens
        WHERE token = ?
        AND usado = FALSE
@@ -391,8 +391,8 @@ app.post("/reset-password", async (req, res) => {
     );
 
     await pool.execute(
-      "UPDATE reset_tokens SET usado = TRUE WHERE id = ?",
-      [reset.id]
+      "UPDATE reset_tokens SET usado = TRUE WHERE token = ?",
+      [token]
     );
 
     res.json({
