@@ -19,8 +19,6 @@ services:
       - .env
     environment:
       AUTH_PORT: 3001
-    depends_on:
-      - db
     restart: "no"
 
   db:
