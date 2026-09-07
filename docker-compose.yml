@@ -6,6 +6,7 @@ services:
     environment:
       PORT: 3000
       AUTH_SERVICE_URL: http://auth-service:3001
+      TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-1}
     ports:
       - "3000:3000"
     depends_on:

@@ -1,6 +1,9 @@
 let filmes = [];
 let favoritos = [];
 let filmeComentarioAtual = null;
+let usuarioAtual = null;
+let contagensComentarios = {};
+let comentarioParaDenunciar = null;
 
 
 // =====================================
@@ -36,6 +39,55 @@ const commentsContainer =
 
 const commentForm =
   document.getElementById("comment-form");
+
+const moderationLink = document.getElementById("moderation-link");
+const moderationBadge = document.getElementById("moderation-badge");
+const reportModal = document.getElementById("report-modal");
+const reportForm = document.getElementById("report-form");
+const reportMessage = document.getElementById("report-message");
+
+moviesContainer.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-action]");
+
+  if (!button) {
+    return;
+  }
+
+  const movieId = Number(button.dataset.movieId);
+
+  if (button.dataset.action === "favorite") {
+    alternarFavorito(
+      movieId,
+      button.dataset.title,
+      button.dataset.posterPath
+    );
+  }
+
+  if (button.dataset.action === "comment") {
+    abrirComentarios(movieId, button.dataset.title);
+  }
+});
+
+favoritesContainer.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-action=remove-favorite]");
+
+  if (button) {
+    removerFavorito(Number(button.dataset.favoriteId));
+  }
+});
+
+commentsContainer.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-action=delete-comment]");
+
+  if (button) {
+    removerComentario(Number(button.dataset.commentId));
+  }
+});
+
+commentsContainer.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-action=report-comment]");
+  if (button) abrirDenuncia(Number(button.dataset.commentId));
+});
 
 
 // =====================================
@@ -188,12 +240,28 @@ async function iniciarAplicacao(usuario) {
   authScreen.classList.add("hidden");
   appScreen.classList.remove("hidden");
 
+  usuarioAtual = usuario;
   userName.textContent = usuario.nome;
+  document.getElementById("user-role").textContent = usuario.role;
+  moderationLink.classList.toggle("hidden", usuario.role !== "admin");
 
   await carregarFilmes();
   await carregarFavoritos();
+
+  if (usuario.role === "admin") atualizarBadgeModeracao();
 }
 
+async function atualizarBadgeModeracao() {
+  try {
+    const response = await fetch("/api/admin/reports/count");
+    if (!response.ok) return;
+    const data = await response.json();
+    moderationBadge.textContent = data.pendentes;
+    moderationBadge.classList.toggle("hidden", data.pendentes === 0);
+  } catch (erro) {
+    console.error("Erro ao carregar denúncias pendentes:", erro.message);
+  }
+}
 
 // =====================================
 // VERIFICAR LOGIN AO ABRIR
@@ -257,6 +325,7 @@ async function carregarFilmes() {
 
     filmes = data.filmes;
 
+    await carregarContagensComentarios();
     renderizarFilmes();
 
   } catch (erro) {
@@ -265,6 +334,21 @@ async function carregarFilmes() {
       `<p class="empty">
         ${erro.message}
       </p>`;
+  }
+}
+
+async function carregarContagensComentarios() {
+  const movieIds = filmes.map((filme) => filme.id).join(",");
+  if (!movieIds) return;
+
+  try {
+    const response = await fetch(`/api/comments/counts?movieIds=${movieIds}`);
+    if (response.ok) {
+      const data = await response.json();
+      contagensComentarios = data.contagens || {};
+    }
+  } catch (erro) {
+    console.error("Erro ao carregar contagens de comentários:", erro.message);
   }
 }
 
@@ -334,11 +418,10 @@ function renderizarFilmes() {
 
                 <button
                   class="favorite-button"
-                  onclick="alternarFavorito(
-                    ${filme.id},
-                    '${escapeHtml(filme.titulo).replace(/'/g, "\\'")}',
-                    '${filme.poster_path || ""}'
-                  )"
+                  data-action="favorite"
+                  data-movie-id="${filme.id}"
+                  data-title="${escapeHtml(filme.titulo)}"
+                  data-poster-path="${escapeHtml(filme.poster_path || "")}"
                 >
                   ${
                     favoritado
@@ -349,12 +432,11 @@ function renderizarFilmes() {
 
                 <button
                   class="comment-button"
-                  onclick="abrirComentarios(
-                    ${filme.id},
-                    '${escapeHtml(filme.titulo).replace(/'/g, "\\'")}'
-                  )"
+                  data-action="comment"
+                  data-movie-id="${filme.id}"
+                  data-title="${escapeHtml(filme.titulo)}"
                 >
-                  💬 Comentar
+                  💬 Comentários
                 </button>
 
               </div>
@@ -526,9 +608,8 @@ function renderizarFavoritos() {
 
                 <button
                   class="remove-favorite"
-                  onclick="removerFavorito(
-                    ${favorito.id}
-                  )"
+                  data-action="remove-favorite"
+                  data-favorite-id="${favorito.id}"
                 >
                   Remover dos favoritos
                 </button>
@@ -651,7 +732,7 @@ function renderizarComentarios(
 
     commentsContainer.innerHTML =
       `<p class="empty">
-        Você ainda não comentou neste filme.
+        Não há comentários ainda.
       </p>`;
 
     return;
@@ -666,9 +747,17 @@ function renderizarComentarios(
             new Date(
               comentario.criado_em
             ).toLocaleString("pt-BR");
+          const proprio = Number(comentario.usuario_id) === Number(usuarioAtual.id);
+          const acao = proprio
+            ? `<button class="delete-comment" data-action="delete-comment" data-comment-id="${comentario.id}">Excluir</button>`
+            : `<button class="report-comment" data-action="report-comment" data-comment-id="${comentario.id}">⚑ Denunciar</button>`;
 
           return `
             <div class="comment-item">
+
+              ${comentario.usuario_nome
+                ? `<strong class="comment-author">${escapeHtml(comentario.usuario_nome)}</strong>`
+                : ""}
 
               <p>
                 ${escapeHtml(
@@ -680,16 +769,7 @@ function renderizarComentarios(
                 ${data}
               </small>
 
-              <br>
-
-              <button
-                class="delete-comment"
-                onclick="removerComentario(
-                  ${comentario.id}
-                )"
-              >
-                Excluir comentário
-              </button>
+              <div class="comment-actions">${acao}</div>
 
             </div>
           `;
@@ -753,6 +833,8 @@ commentForm.addEventListener(
       await carregarComentarios(
         filmeComentarioAtual.id
       );
+      await carregarContagensComentarios();
+      renderizarFilmes();
 
     } catch (erro) {
 
@@ -791,6 +873,8 @@ async function removerComentario(id) {
     await carregarComentarios(
       filmeComentarioAtual.id
     );
+    await carregarContagensComentarios();
+    renderizarFilmes();
 
   } catch (erro) {
 
@@ -816,6 +900,53 @@ document
       filmeComentarioAtual = null;
     }
   );
+
+function abrirDenuncia(commentId) {
+  comentarioParaDenunciar = commentId;
+  reportForm.reset();
+  reportMessage.textContent = "";
+  reportModal.classList.remove("hidden");
+  reportModal.querySelector("input[name=report-reason]").focus();
+}
+
+function fecharDenuncia() {
+  reportModal.classList.add("hidden");
+  comentarioParaDenunciar = null;
+}
+
+document.getElementById("close-report-modal").addEventListener("click", fecharDenuncia);
+document.getElementById("cancel-report").addEventListener("click", fecharDenuncia);
+
+reportForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const motivoSelecionado = reportForm.elements["report-reason"].value;
+  const detalhe = document.getElementById("report-other").value.trim();
+  if (motivoSelecionado === "Outro" && !detalhe) {
+    reportMessage.textContent = "Descreva brevemente o motivo da denúncia.";
+    return;
+  }
+  const motivo = motivoSelecionado === "Outro" && detalhe
+    ? `Outro: ${detalhe}`
+    : motivoSelecionado;
+
+  if (!comentarioParaDenunciar || !motivo) return;
+  reportMessage.textContent = "Enviando denúncia...";
+
+  try {
+    const response = await fetch(`/api/comments/${comentarioParaDenunciar}/report`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ motivo })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.erro);
+    reportMessage.textContent = data.mensagem;
+    window.setTimeout(fecharDenuncia, 1600);
+    if (usuarioAtual.role === "admin") atualizarBadgeModeracao();
+  } catch (erro) {
+    reportMessage.textContent = erro.message;
+  }
+});
 
 
 // =====================================
@@ -860,7 +991,6 @@ document
     "click",
     carregarFilmes
   );
-
 
 // =====================================
 // SEGURANÇA — ESCAPAR HTML

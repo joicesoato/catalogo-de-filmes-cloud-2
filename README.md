@@ -428,6 +428,89 @@ Resposta esperada:
 
 ---
 
+## ISW055 · Atividade 4 · Autorização
+
+Professor: [siriani](https://github.com/siriani)
+
+### Controle de acesso por papel — RBAC
+
+O backend utiliza os papéis `usuario` e `admin`. A interface apenas melhora a experiência; a decisão é sempre feita no servidor.
+
+#### usuario
+
+- Visualiza o catálogo;
+- gerencia seus favoritos;
+- cria comentários;
+- exclui somente os próprios comentários;
+- acessa a própria conta e redefine a própria senha.
+
+#### admin
+
+Possui todas as permissões de `usuario` e também pode moderar e excluir comentários de qualquer usuário. Em especial: `usuario` pode excluir apenas seus próprios comentários; `admin` pode excluir comentários de qualquer usuário.
+
+### Padrão de autorização utilizado
+
+Este projeto utiliza o **Padrão A — enforcement centralizado**. O catálogo mantém a sessão do usuário e consulta o `auth-service` para obter as permissões atuais antes de ações administrativas. Assim, as regras ficam centralizadas e uma alteração de papel tem efeito imediato.
+
+O custo é uma chamada de rede adicional e a dependência do `auth-service` para decisões de autorização. No **Padrão B**, um JWT assinado poderia carregar claims de papel/permissões e ser validado localmente, reduzindo chamadas, mas alterações de papel poderiam só aparecer quando o token fosse renovado ou expirasse. Essa alternativa não é utilizada aqui.
+
+### Demonstração
+
+1. Faça login como `usuario` e exclua um comentário próprio: sucesso.
+2. Com o mesmo usuário, envie `DELETE /api/comments/:id` para comentário de outra pessoa: `403 Forbidden` e `{"erro":"Acesso negado"}`.
+3. Faça login como `admin` e repita a chamada: sucesso.
+4. Acesse `GET /api/admin/comments` sem autenticação: `401 Unauthorized`.
+5. Acesse a mesma rota como `usuario`: `403 Forbidden`.
+
+Espaço para prints da demonstração:
+
+```text
+[inserir prints aqui]
+```
+
+### Segurança
+
+Foram aplicadas boas práticas compatíveis com o escopo: bcrypt para senhas, autenticação e RBAC no backend, tokens de redefinição aleatórios com hash, expiração de 30 minutos e uso único, queries parametrizadas, validação de entradas, escape de comentários contra XSS, Helmet, cookies HttpOnly/SameSite, rate limiting em endpoints sensíveis, variáveis de ambiente para secrets, erros sem detalhes internos e princípio do menor privilégio. Isso não representa garantia de segurança total; configurações externas, HTTPS e operação do SMTP continuam sendo responsabilidades do ambiente.
+
+### Configuração externa
+
+O cadastro e a recuperação de senha dependem de um servidor SMTP configurado em `MAIL_HOST`, `MAIL_PORT`, `MAIL_USER`, `MAIL_PASSWORD` e `MAIL_FROM`. O catálogo também depende de `TMDB_API_KEY`. Não inclua valores reais no Git.
+
+## Comentários e denúncias
+
+Todos os usuários autenticados podem visualizar todos os comentários de um filme. Cada comentário mostra o autor e a data, mas nunca expõe `senha_hash`, tokens, e-mails ou secrets.
+
+O autor pode excluir somente o próprio comentário. Comentários de outras pessoas exibem a ação **Denunciar**, que aceita motivos controlados como conteúdo ofensivo, discurso de ódio, spam, conteúdo inadequado, assédio ou outro. A denúncia é validada no backend, não permite denunciar o próprio comentário e evita denúncias pendentes duplicadas pelo mesmo usuário.
+
+### Moderação
+
+Administradores possuem uma área separada em `/admin.html`, protegida no backend pela permissão `admin:moderate`. A página oferece:
+
+- contador de denúncias pendentes;
+- total de comentários e denúncias do dia;
+- pesquisa por texto;
+- filtro por filme, data, status e comentários denunciados;
+- paginação;
+- detalhes das denúncias;
+- ações para ignorar ou resolver denúncias;
+- exclusão de comentários com confirmação.
+
+Os títulos dos filmes são obtidos pelo serviço TMDB já existente e mantidos em cache curto, com fallback `Filme #id`. Usuários comuns recebem `401` sem sessão e `403` ao tentar acessar endpoints administrativos.
+
+Endpoints principais:
+
+```text
+GET   /api/comments/:movieId
+POST  /api/comments/:id/report
+GET   /api/comments/counts?movieIds=13,14
+GET   /api/admin/comments
+GET   /api/admin/reports/count
+GET   /api/admin/reports
+PATCH /api/admin/reports/:id
+```
+
+A tabela `comentario_denuncias` é criada por `database/migration-v4.sql` e também está presente no `init.sql`. A migration é idempotente e possui foreign keys e índices para comentário, denunciante, status e data.
+
 ## Fluxo geral de autenticação
 
 ```text

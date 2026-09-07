@@ -6,8 +6,14 @@ const bcrypt = require("bcryptjs");
 const nodemailer = require("nodemailer");
 const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
+const helmet = require("helmet");
+const rateLimit = require("express-rate-limit");
 
 const app = express();
+app.use(helmet({
+  contentSecurityPolicy: false,
+  referrerPolicy: { policy: "same-origin" }
+}));
 app.use(express.json());
 
 const PORT = process.env.AUTH_PORT || 3001;
@@ -22,7 +28,38 @@ const pool = mysql.createPool({
   connectionLimit: 10
 });
 
-const JWT_SECRET = process.env.JWT_SECRET || "chave-temporaria";
+const JWT_SECRET = process.env.JWT_SECRET;
+
+if (!JWT_SECRET) {
+  throw new Error("JWT_SECRET não configurado.");
+}
+
+const sensitiveLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 20,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  message: { erro: "Muitas tentativas. Tente novamente mais tarde." }
+});
+
+const permissoesPorRole = {
+  usuario: [
+    "catalog:read",
+    "favorites:manage",
+    "comments:create",
+    "comments:delete:own",
+    "account:manage"
+  ],
+  admin: [
+    "catalog:read",
+    "favorites:manage",
+    "comments:create",
+    "comments:delete:own",
+    "comments:delete:any",
+    "admin:moderate",
+    "account:manage"
+  ]
+};
 
 const transporter = nodemailer.createTransport({
   host: process.env.MAIL_HOST,
@@ -35,16 +72,20 @@ const transporter = nodemailer.createTransport({
 });
 
 // CADASTRO
-app.post("/register", async (req, res) => {
+app.post("/register", sensitiveLimiter, async (req, res) => {
   try {
     const nome = req.body.nome?.trim();
     const email = req.body.email?.trim().toLowerCase();
     const senha = req.body.senha;
 
-    if (!nome || !email || !senha) {
+    if (!nome || !email || !senha || nome.length > 100 || email.length > 150) {
       return res.status(400).json({
         erro: "Nome, e-mail e senha são obrigatórios."
       });
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ erro: "Informe um e-mail válido." });
     }
 
     if (senha.length < 6) {
@@ -64,7 +105,7 @@ app.post("/register", async (req, res) => {
       });
     }
 
-    const senhaHash = await bcrypt.hash(senha, 10);
+    const senhaHash = await bcrypt.hash(senha, 12);
 
     const tokenVerificacao = crypto.randomBytes(32).toString("hex");
 
@@ -203,7 +244,7 @@ app.get("/verify-email", async (req, res) => {
 });
 
 // LOGIN
-app.post("/login", async (req, res) => {
+app.post("/login", sensitiveLimiter, async (req, res) => {
   try {
     const { email, senha } = req.body;
 
@@ -266,6 +307,37 @@ app.post("/login", async (req, res) => {
   }
 });
 
+app.get("/authorize", async (req, res) => {
+  try {
+    const auth = req.headers.authorization;
+
+    if (!auth || !auth.startsWith("Bearer ")) {
+      return res.status(401).json({ erro: "Token não informado." });
+    }
+
+    const dados = jwt.verify(auth.substring(7), JWT_SECRET);
+    const [usuarios] = await pool.execute(
+      "SELECT id, nome, email, role FROM usuarios WHERE id = ?",
+      [dados.id]
+    );
+
+    if (usuarios.length === 0) {
+      return res.status(401).json({ erro: "Usuário não encontrado." });
+    }
+
+    const usuario = usuarios[0];
+    const permissoes = permissoesPorRole[usuario.role] || [];
+
+    res.json({
+      autenticado: true,
+      usuario,
+      permissoes
+    });
+  } catch (erro) {
+    res.status(401).json({ erro: "Token inválido ou expirado." });
+  }
+});
+
 // VALIDAR TOKEN
 app.get("/me", async (req, res) => {
   try {
@@ -292,7 +364,7 @@ app.get("/me", async (req, res) => {
 });
 
 // ESQUECI A SENHA
-app.post("/forgot-password", async (req, res) => {
+app.post("/forgot-password", sensitiveLimiter, async (req, res) => {
   try {
     const { email } = req.body;
 
@@ -317,12 +389,13 @@ app.post("/forgot-password", async (req, res) => {
     const usuario = usuarios[0];
 
     const token = crypto.randomBytes(32).toString("hex");
+    const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
 
     await pool.execute(
       `INSERT INTO reset_tokens
-       (token, usuario_id, criado_em, expira_em, usado)
+      (token, usuario_id, criado_em, expira_em, usado)
        VALUES (?, ?, NOW(), DATE_ADD(NOW(), INTERVAL 30 MINUTE), FALSE)`,
-      [token, usuario.id]
+          [tokenHash, usuario.id]
     );
 
     const appUrl = process.env.APP_URL || "http://localhost:3000";
@@ -356,7 +429,7 @@ app.post("/forgot-password", async (req, res) => {
 });
 
 // REDEFINIR SENHA
-app.post("/reset-password", async (req, res) => {
+app.post("/reset-password", sensitiveLimiter, async (req, res) => {
   try {
     const { token, novaSenha } = req.body;
 
@@ -366,13 +439,20 @@ app.post("/reset-password", async (req, res) => {
       });
     }
 
+    if (typeof novaSenha !== "string" || novaSenha.length < 6 || novaSenha.length > 128) {
+      return res.status(400).json({
+        erro: "A nova senha deve ter entre 6 e 128 caracteres."
+      });
+    }
+
+    const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
     const [tokens] = await pool.execute(
       `SELECT usuario_id
        FROM reset_tokens
        WHERE token = ?
        AND usado = FALSE
        AND expira_em > NOW()`,
-      [token]
+      [tokenHash]
     );
 
     if (tokens.length === 0) {
@@ -383,7 +463,7 @@ app.post("/reset-password", async (req, res) => {
 
     const reset = tokens[0];
 
-    const senhaHash = await bcrypt.hash(novaSenha, 10);
+    const senhaHash = await bcrypt.hash(novaSenha, 12);
 
     await pool.execute(
       "UPDATE usuarios SET senha_hash = ? WHERE id = ?",
@@ -392,7 +472,7 @@ app.post("/reset-password", async (req, res) => {
 
     await pool.execute(
       "UPDATE reset_tokens SET usado = TRUE WHERE token = ?",
-      [token]
+      [tokenHash]
     );
 
     res.json({

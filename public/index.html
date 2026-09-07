@@ -144,10 +144,19 @@
         <strong>Tom Hanks</strong>
       </div>
 
+      <nav class="main-nav" aria-label="Navegação principal">
+        <a href="#catalog-section">🎬 Catálogo</a>
+        <a href="#favorites-section">❤️ Favoritos</a>
+        <a id="moderation-link" class="hidden" href="/admin.html">
+          🛡️ Moderação <span id="moderation-badge" class="count-badge hidden">0</span>
+        </a>
+      </nav>
+
       <div class="user-area">
 
         <span>
           Olá, <strong id="user-name"></strong>
+          <span id="user-role" class="role-badge"></span>
         </span>
 
         <button id="logout-button">
@@ -161,7 +170,7 @@
 
     <main>
 
-      <section class="hero">
+      <section id="catalog-section" class="hero">
 
         <div>
 
@@ -216,7 +225,7 @@
 
       <!-- FAVORITOS -->
 
-      <section class="content-section favorites-section">
+      <section id="favorites-section" class="content-section favorites-section">
 
         <div class="section-title">
 
@@ -286,6 +295,8 @@
 
       <form id="comment-form">
 
+        <label for="comment-text" class="visually-hidden">Escreva seu comentário</label>
+
         <textarea
           id="comment-text"
           placeholder="Escreva seu comentário..."
@@ -303,6 +314,33 @@
 
     </div>
 
+  </div>
+
+  <div id="report-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="report-title">
+    <div class="modal-content report-dialog">
+      <button id="close-report-modal" class="close-button" type="button" aria-label="Fechar denúncia">×</button>
+      <p class="tag">COMUNIDADE</p>
+      <h2 id="report-title">Denunciar comentário</h2>
+      <p class="report-intro">Ajude a manter nossa comunidade segura.</p>
+      <form id="report-form">
+        <fieldset>
+          <legend>Por que você está denunciando?</legend>
+          <label><input type="radio" name="report-reason" value="Conteúdo ofensivo" required> Conteúdo ofensivo</label>
+          <label><input type="radio" name="report-reason" value="Discurso de ódio"> Discurso de ódio</label>
+          <label><input type="radio" name="report-reason" value="Spam"> Spam</label>
+          <label><input type="radio" name="report-reason" value="Conteúdo inadequado"> Conteúdo inadequado</label>
+          <label><input type="radio" name="report-reason" value="Assédio"> Assédio</label>
+          <label><input type="radio" name="report-reason" value="Outro"> Outro</label>
+        </fieldset>
+        <label for="report-other">Detalhe o motivo (opcional)</label>
+        <textarea id="report-other" maxlength="500" placeholder="Conte um pouco mais"></textarea>
+        <p id="report-message" class="message" role="status" aria-live="polite"></p>
+        <div class="dialog-actions">
+          <button id="cancel-report" type="button" class="secondary-button">Cancelar</button>
+          <button type="submit">Enviar denúncia</button>
+        </div>
+      </form>
+    </div>
   </div>
 
 
