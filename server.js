@@ -261,25 +261,6 @@ app.delete("/api/favorites/:id", exigirLogin, async (req, res) => {
   }
 });
 
-app.get("/api/comments/:movieId", exigirLogin, async (req, res) => {
-  try {
-    if (!/^\d+$/.test(req.params.movieId)) {
-      return res.status(400).json({ erro: "ID de filme inválido." });
-    }
-    const [comentarios] = await pool.execute(
-      `SELECT c.id, c.tmdb_movie_id, c.texto, c.criado_em,
-              c.usuario_id, u.nome AS usuario_nome
-       FROM comentarios c INNER JOIN usuarios u ON u.id = c.usuario_id
-       WHERE c.tmdb_movie_id = ? ORDER BY c.criado_em DESC`,
-      [req.params.movieId]
-    );
-    res.json({ comentarios });
-  } catch (erro) {
-    console.error("Erro ao buscar comentários:", erro.message);
-    res.status(500).json({ erro: "Não foi possível carregar os comentários." });
-  }
-});
-
 app.get("/api/comments/counts", exigirLogin, async (req, res) => {
   try {
     const ids = String(req.query.movieIds || "")
@@ -306,6 +287,25 @@ app.get("/api/comments/counts", exigirLogin, async (req, res) => {
   } catch (erro) {
     console.error("Erro ao contar comentários:", erro.message);
     res.status(500).json({ erro: "Não foi possível carregar os contadores." });
+  }
+});
+
+app.get("/api/comments/:movieId", exigirLogin, async (req, res) => {
+  try {
+    if (!/^\d+$/.test(req.params.movieId)) {
+      return res.status(400).json({ erro: "ID de filme inválido." });
+    }
+    const [comentarios] = await pool.execute(
+      `SELECT c.id, c.tmdb_movie_id, c.texto, c.criado_em,
+              c.usuario_id, u.nome AS usuario_nome
+       FROM comentarios c INNER JOIN usuarios u ON u.id = c.usuario_id
+       WHERE c.tmdb_movie_id = ? ORDER BY c.criado_em DESC`,
+      [req.params.movieId]
+    );
+    res.json({ comentarios });
+  } catch (erro) {
+    console.error("Erro ao buscar comentários:", erro.message);
+    res.status(500).json({ erro: "Não foi possível carregar os comentários." });
   }
 });
 

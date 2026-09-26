@@ -1,0 +1,21 @@
+:root {
+  font-family: "Avenir Next", Avenir, "Segoe UI", sans-serif;
+  color: #edf1f2;
+  background: #091016;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  --ink: #091016;
+  --ink-raised: #101a21;
+  --ink-soft: #16232c;
+  --paper: #edf1f2;
+  --muted: #9baab0;
+  --muted-dim: #6f8189;
+  --line: rgba(212, 229, 233, .12);
+  --line-strong: rgba(212, 229, 233, .22);
+  --accent: #76d7cc;
+  --accent-deep: #154f50;
+  --accent-warm: #d4ab78;
+  --danger: #f18b83;
+  --radius: 5px;
+  --content-width: 1440px;
+}
