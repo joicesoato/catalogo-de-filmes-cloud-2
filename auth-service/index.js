@@ -29,6 +29,7 @@ const pool = mysql.createPool({
 });
 
 const JWT_SECRET = process.env.JWT_SECRET;
+const INTERNAL_SERVICE_SECRET = process.env.INTERNAL_SERVICE_SECRET || "";
 
 if (!JWT_SECRET) {
   throw new Error("JWT_SECRET não configurado.");
@@ -190,7 +191,7 @@ app.post("/register", sensitiveLimiter, async (req, res) => {
   } catch (erro) {
     console.error("Erro no cadastro:", erro);
 
-    res.status(500).json({
+    res.status(503).json({
       erro: "Erro interno ao realizar cadastro."
     });
   }
@@ -237,7 +238,7 @@ app.get("/verify-email", async (req, res) => {
   } catch (erro) {
     console.error("Erro na confirmação:", erro);
 
-    res.status(500).send(
+    res.status(503).send(
       "Erro interno ao confirmar o e-mail."
     );
   }
@@ -309,6 +310,10 @@ app.post("/login", sensitiveLimiter, async (req, res) => {
 
 app.get("/authorize", async (req, res) => {
   try {
+    if (!INTERNAL_SERVICE_SECRET || req.get("X-Internal-Secret") !== INTERNAL_SERVICE_SECRET) {
+      return res.status(401).json({ erro: "Não autorizado." });
+    }
+
     const auth = req.headers.authorization;
 
     if (!auth || !auth.startsWith("Bearer ")) {
@@ -399,7 +404,7 @@ app.post("/forgot-password", sensitiveLimiter, async (req, res) => {
     );
 
     const appUrl = process.env.APP_URL || "http://localhost:3000";
-    const link = `${appUrl}/reset-password.html?token=${token}`;
+    const link = `${appUrl}/reset?token=${encodeURIComponent(token)}`;
 
     await transporter.sendMail({
       from: process.env.MAIL_FROM,

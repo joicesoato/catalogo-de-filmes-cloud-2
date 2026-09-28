@@ -59,3 +59,11 @@ export interface ApiMessage {
   mensagem?: string;
   erro?: string;
 }
+export interface AuditLog {
+  id: string;
+  usuario_id: number | null;
+  acao: string;
+  timestamp: string;
+  ip: string | null;
+  detalhes: Record<string, unknown>;
+}

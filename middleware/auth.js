@@ -1,5 +1,6 @@
 const AUTH_SERVICE_URL =
 	process.env.AUTH_SERVICE_URL || "http://auth-service:3001";
+const { registrarAuditoria } = require("../services/audit");
 
 function exigirLogin(req, res, next) {
 	if (!req.session.usuario || !req.session.authToken) {
@@ -45,6 +46,7 @@ function exigirPermissao(permissao) {
 			}
 
 			if (!resultado.permitido) {
+				void registrarAuditoria(req, "access_denied_403", { permissao });
 				return res.status(403).json({ erro: "Acesso negado" });
 			}
 

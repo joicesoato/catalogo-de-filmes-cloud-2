@@ -1,627 +1,475 @@
 # Catálogo de Filmes — Tom Hanks
 
-Aplicação web desenvolvida como projeto acadêmico para consulta e interação com filmes do ator **Tom Hanks**, utilizando a API do **TMDB** e uma arquitetura baseada em serviços desacoplados.
+Projeto acadêmico da disciplina **ISW055 — Cloud**, desenvolvido com Node.js, Express, React, TypeScript, MariaDB, Docker, Docker Compose e Redis.
 
-O projeto foi evoluído para separar as responsabilidades de autenticação da aplicação principal, utilizando um **microsserviço de autenticação** executado em um container Docker independente.
+O sistema permite consultar filmes de Tom Hanks, criar conta, confirmar e-mail, fazer login, recuperar senha, favoritar filmes, comentar e denunciar comentários. A aplicação também possui **RBAC**, auditoria com **Redis Streams**, health checks, métricas e pipeline de **CI/CD com GitHub Actions**.
 
----
-
-## Sobre o projeto
-
-O sistema permite:
-
-- Consultar filmes de Tom Hanks;
-- Criar uma conta de usuário;
-- Realizar login;
-- Recuperar e redefinir a senha;
-- Confirmar o e-mail de cadastro;
-- Trabalhar com diferentes papéis de usuário;
-- Adicionar filmes aos favoritos;
-- Adicionar comentários aos filmes;
-- Manter os dados associados ao usuário autenticado;
-- Executar a aplicação utilizando Docker e Docker Compose.
+Professor: [Allan Siriani](https://github.com/siriani)
 
 ---
 
-## Arquitetura
-
-O projeto utiliza três containers principais:
+## 1. Arquitetura
 
 ```text
-                    ┌──────────────────────┐
-                    │      Navegador       │
-                    └──────────┬───────────┘
+                           Navegador
                                │
                                ▼
-                    ┌──────────────────────┐
-                    │        app           │
-                    │  Catálogo de Filmes  │
-                    │      porta 3000       │
-                    └──────────┬───────────┘
-                               │
-                    Rede Docker interna
-                               │
-                               ▼
-                    ┌──────────────────────┐
-                    │    auth-service      │
-                    │ Microsserviço de     │
-                    │   autenticação       │
-                    │      porta 3001      │
-                    │   sem porta pública  │
-                    └──────────┬───────────┘
-                               │
-                               ▼
-                    ┌──────────────────────┐
-                    │         db           │
-                    │     MariaDB/MySQL    │
-                    │      porta 3306      │
-                    └──────────────────────┘
+                    ┌─────────────────────┐
+                    │        app          │
+                    │ React + Express     │
+                    │       :3000         │
+                    └──────┬───────┬──────┘
+                           │       │
+              ┌────────────┘       └─────────────┐
+              ▼                                  ▼
+     ┌─────────────────┐                 ┌─────────────────┐
+     │  auth-service   │                 │   log-service   │
+     │      :3001      │                 │      :3002      │
+     │ rede interna    │                 │ rede interna    │
+     └────────┬────────┘                 └────────┬────────┘
+              │                                   │
+              ▼                                   ▼
+       ┌─────────────┐                      ┌─────────────┐
+       │   MariaDB   │                      │    Redis    │
+       │    :3306    │                      │    :6379    │
+       └─────────────┘                      └─────────────┘
 ```
+
+Somente o `app` publica porta para o host. `auth-service`, `log-service`, MariaDB e Redis permanecem na rede interna do Docker.
 
 ### Serviços
 
-| Serviço | Função | Porta |
-|---|---|---|
-| `app` | Aplicação principal e catálogo | `3000` pública |
-| `auth-service` | Cadastro, login, papéis e recuperação de senha | `3001` somente interna |
-| `db` | Banco de dados MariaDB/MySQL | `3306` interna |
-
-O `auth-service` **não possui mapeamento de porta para o host**. Ele é acessado pela aplicação principal através da rede interna do Docker.
+| Serviço | Responsabilidade | Porta pública |
+|---|---|---:|
+| `app` | Frontend React + API Express | `3000` |
+| `auth-service` | Autenticação, JWT, bcrypt, e-mail e permissões | nenhuma |
+| `log-service` | Auditoria e consulta de logs | nenhuma |
+| `db` | Persistência MariaDB | nenhuma |
+| `redis` | Redis Streams e persistência dos eventos | nenhuma |
 
 ---
 
-## Microsserviço de autenticação
+# 2. Frontend React
 
-A autenticação foi desacoplada da aplicação principal.
+O frontend foi migrado para **React + TypeScript + Vite**, mantendo a API e a autoridade de segurança no backend.
 
-O `auth-service` é responsável por:
+Principais páginas:
 
-- Cadastro de usuários;
-- Hash das senhas;
 - Login;
-- Geração de JWT;
-- Validação do token;
-- Controle de papéis;
-- Confirmação de e-mail;
-- Solicitação de recuperação de senha;
-- Geração de token de recuperação;
-- Validação de token;
-- Expiração do token;
-- Uso único do token;
-- Alteração da senha.
+- Cadastro;
+- Recuperação de senha;
+- Redefinição de senha;
+- Catálogo;
+- Detalhes do filme;
+- Favoritos;
+- Moderação administrativa;
+- Visualização de eventos de auditoria.
 
-A aplicação principal funciona como gateway para as rotas públicas de autenticação, encaminhando as requisições para o serviço interno.
+A aplicação usa a sessão HTTP existente. O JWT continua somente entre o backend e o `auth-service`; ele não é armazenado no navegador.
 
----
-
-## Papéis de usuário
-
-O sistema possui dois papéis:
-
-- `usuario`
-- `admin`
-
-O papel do usuário é armazenado no banco de dados e também é incluído nas informações do usuário autenticado.
+Durante o build Docker, o Vite gera `frontend/dist` e o Express serve essa versão em produção.
 
 ---
 
-## Segurança das senhas
+# 3. Autenticação e segurança
 
-As senhas **não são armazenadas em texto puro**.
+## Senhas
 
-O projeto utiliza a biblioteca **bcryptjs** para gerar um hash seguro da senha antes de armazená-la no banco de dados.
+As senhas nunca são armazenadas em texto puro. O `auth-service` utiliza `bcryptjs` com fator de custo 12.
 
-Exemplo do fluxo:
+## JWT
 
-```text
-Senha informada
-      ↓
-bcrypt
-      ↓
-senha_hash
-      ↓
-Banco de dados
-```
+O JWT é emitido pelo `auth-service` e utilizado na comunicação interna entre o backend e o serviço de autenticação.
 
-No login, a senha informada é comparada com o hash armazenado utilizando `bcrypt.compare()`.
+## Sessão
 
----
+O navegador recebe apenas o cookie de sessão `connect.sid`, configurado com:
 
-## Confirmação de e-mail
-
-Após o cadastro, o sistema gera um token de confirmação e envia um link para o e-mail informado.
-
-O token possui validade de **30 minutos**.
-
-O usuário somente consegue realizar o login após a confirmação do e-mail.
-
-Fluxo:
-
-```text
-Cadastro
-   ↓
-Geração do token
-   ↓
-Envio do e-mail
-   ↓
-Usuário acessa o link
-   ↓
-Token é validado
-   ↓
-E-mail confirmado
-   ↓
-Login liberado
-```
-
----
+- `HttpOnly`;
+- `SameSite=Lax`;
+- `Secure` em produção;
+- validade limitada.
 
 ## Recuperação de senha
 
-O sistema possui fluxo de recuperação de senha por e-mail.
+Os tokens de recuperação são:
 
-Ao solicitar a recuperação:
+- aleatórios;
+- armazenados com SHA-256;
+- válidos por 30 minutos;
+- de uso único.
 
-1. O usuário informa o e-mail;
-2. O `auth-service` gera um token aleatório;
-3. O token é armazenado na tabela `reset_tokens`;
-4. É definida uma validade de 30 minutos;
-5. Um link de redefinição é enviado por e-mail;
-6. O usuário acessa o link;
-7. O token é validado;
-8. A nova senha é armazenada utilizando bcrypt;
-9. O token é marcado como utilizado.
+## Proteções adicionais
 
-### Regras do token
-
-O token somente é aceito quando:
-
-- Existe no banco;
-- Ainda não expirou;
-- Não foi utilizado anteriormente.
-
-Após a redefinição, o token é marcado como:
-
-```text
-usado = TRUE
-```
-
-Assim, ele não pode ser reutilizado.
+- Helmet;
+- Content Security Policy;
+- rate limiting;
+- consultas SQL parametrizadas;
+- validação de entradas;
+- limite de tamanho de body;
+- segredo interno entre serviços;
+- segredos fora do Git;
+- comunicação interna entre containers;
+- princípio de menor exposição de portas.
 
 ---
 
-## Banco de dados
+# 4. RBAC — Atividade 4
 
-O projeto utiliza **MariaDB/MySQL**.
+O sistema possui dois papéis:
 
-Entre as principais estruturas estão:
+- `usuario`;
+- `admin`.
 
-- `usuarios`
-- `favoritos`
-- `comentarios`
-- `reset_tokens`
+A autorização é aplicada no **backend**. A interface não é considerada uma barreira de segurança.
 
-A tabela `reset_tokens` é utilizada especificamente para o fluxo de recuperação de senha.
+### `usuario`
 
-Estrutura conceitual:
+- consulta o catálogo;
+- gerencia os próprios favoritos;
+- cria comentários;
+- exclui somente os próprios comentários;
+- denuncia comentários de terceiros;
+- gerencia a própria conta.
 
-```text
-reset_tokens
-├── id
-├── token
-├── usuario_id
-├── criado_em
-├── expira_em
-└── usado
-```
+### `admin`
 
----
+Possui as permissões de usuário e também pode:
 
-## API do TMDB
+- excluir comentários de qualquer usuário;
+- acessar a área de moderação;
+- consultar denúncias;
+- atualizar o status das denúncias;
+- consultar os logs de auditoria.
 
-Os filmes são obtidos através da API do **The Movie Database (TMDB)**.
+### Enforcement
 
-O token da API é armazenado em variável de ambiente e não deve ser versionado no GitHub.
+Antes de operações administrativas, o `app` consulta o `auth-service` em `/authorize`.
 
-A aplicação utiliza o serviço:
+O `auth-service` verifica o JWT, consulta o papel atual no banco e retorna as permissões correspondentes.
 
-```text
-services/tmdb.js
-```
+Assim, uma alteração de papel no banco é considerada na próxima consulta de autorização, sem depender de uma permissão armazenada apenas na interface.
 
-para realizar a comunicação com a API.
+### Demonstração recomendada
 
----
-
-## Docker
-
-O projeto utiliza **Docker Compose** para executar todos os serviços.
-
-Para iniciar:
-
-```bash
-docker compose up -d --build
-```
-
-Para verificar os containers:
-
-```bash
-docker compose ps
-```
-
-Para acompanhar os logs:
-
-```bash
-docker compose logs -f
-```
-
-Para parar os serviços:
-
-```bash
-docker compose down
-```
+1. Entrar como `usuario`.
+2. Criar um comentário.
+3. Excluir o próprio comentário: `200`.
+4. Tentar excluir comentário de outro usuário: `403`.
+5. Entrar como `admin`.
+6. Excluir o comentário de outro usuário: sucesso.
+7. Acessar `/api/admin/comments` como usuário comum: `403`.
+8. Acessar `/api/admin/logs` como usuário comum: `403`.
+9. Consultar `/api/admin/logs` como admin: `200`.
 
 ---
 
-## Acesso à aplicação
+# 5. Auditoria com Redis — Atividade 5
 
-Após iniciar os containers, a aplicação principal estará disponível em:
+Foi criado um serviço separado chamado `log-service`.
 
-```text
-http://localhost:3000
-```
+O serviço não possui porta publicada para o host e se comunica somente pela rede interna Docker.
 
-O `auth-service` não deve ser acessado diretamente pelo navegador, pois sua porta não é publicada no host.
+## Redis Streams
 
-A comunicação ocorre internamente:
+Os eventos são armazenados no stream:
 
 ```text
-app → auth-service:3001
+audit:events
 ```
+
+O Redis utiliza AOF para persistência:
+
+```text
+--appendonly yes
+--appendfsync everysec
+```
+
+Os eventos são limitados a aproximadamente 5.000 registros para evitar crescimento ilimitado.
+
+## Eventos registrados
+
+A aplicação registra, entre outros:
+
+| Evento | Quando ocorre |
+|---|---|
+| `login` | login realizado com sucesso |
+| `logout` | logout realizado |
+| `favorite_add` | filme adicionado aos favoritos |
+| `favorite_remove` | filme removido dos favoritos |
+| `comment_create` | comentário criado |
+| `comment_delete` | comentário excluído |
+| `access_denied_403` | tentativa autenticada sem permissão |
+
+Cada evento possui, no mínimo:
+
+- `usuario_id`;
+- `acao`;
+- `timestamp`.
+
+Também podem ser registrados IP e detalhes da operação.
+
+### Endpoint administrativo
+
+```text
+GET /api/admin/logs?limit=50
+```
+
+A rota é protegida por:
+
+```text
+admin:moderate
+```
+
+Usuário comum recebe `403 Forbidden`.
+
+O frontend administrativo exibe os eventos recentes em uma área de auditoria.
 
 ---
 
-## Estrutura do projeto
+# 6. Health checks e métricas — Extra 2
+
+## `/health`
+
+O endpoint do `app` verifica:
+
+- MariaDB;
+- `auth-service`;
+- `log-service`.
+
+Se todas as dependências estiverem disponíveis:
 
 ```text
-catalogo-de-filmes/
-│
-├── auth-service/
-│   ├── index.js
-│   ├── package.json
-│   └── Dockerfile
-│
-├── database/
-│   └── schema.sql
-│
-├── middleware/
-│   └── auth.js
-│
-├── public/
-│   ├── index.html
-│   ├── style.css
-│   └── app.js
-│
-├── services/
-│   └── tmdb.js
-│
-├── .env.example
-├── .gitignore
-├── Dockerfile
-├── docker-compose.yml
-├── package.json
-├── package-lock.json
-├── README.md
-└── server.js
+HTTP 200
 ```
 
----
+Se uma dependência estiver indisponível:
 
-## Variáveis de ambiente
-
-Crie um arquivo `.env` local com as configurações necessárias.
+```text
+HTTP 503
+```
 
 Exemplo:
-
-```env
-PORT=3000
-
-DB_HOST=db
-DB_PORT=3306
-DB_USER=seu_usuario
-DB_PASSWORD=sua_senha
-DB_NAME=seu_banco
-
-TMDB_TOKEN=seu_token_tmdb
-
-AUTH_SERVICE_URL=http://auth-service:3001
-AUTH_PORT=3001
-
-JWT_SECRET=sua_chave_jwt
-SESSION_SECRET=sua_chave_de_sessao
-
-APP_URL=http://localhost:3000
-
-MAIL_HOST=seu_servidor_smtp
-MAIL_PORT=587
-MAIL_USER=seu_usuario_smtp
-MAIL_PASSWORD=sua_senha_smtp
-MAIL_FROM=seu_email
-```
-
-⚠️ **Nunca envie o arquivo `.env` para o GitHub.**
-
-O projeto deve utilizar `.env.example` para documentar as variáveis necessárias sem expor credenciais.
-
----
-
-## Instalação e execução
-
-### 1. Clonar o repositório
-
-```bash
-git clone URL_DO_REPOSITORIO
-cd catalogo-de-filmes
-```
-
-### 2. Configurar o `.env`
-
-Crie o arquivo:
-
-```bash
-.env
-```
-
-e preencha as variáveis necessárias.
-
-### 3. Subir os containers
-
-```bash
-docker compose up -d --build
-```
-
-### 4. Verificar
-
-```bash
-docker compose ps
-```
-
-Acesse:
-
-```text
-http://localhost:3000
-```
-
----
-
-## Testes básicos
-
-### Verificar o catálogo
-
-Acesse:
-
-```text
-http://localhost:3000
-```
-
-### Verificar o auth-service
-
-O serviço possui uma rota interna:
-
-```text
-GET /health
-```
-
-Exemplo de teste dentro do Docker:
-
-```bash
-docker compose exec app node -e "fetch('http://auth-service:3001/health').then(async r=>console.log(r.status, await r.text())).catch(e=>console.error(e.message))"
-```
-
-Resposta esperada:
 
 ```json
 {
   "status": "ok",
-  "servico": "auth-service"
+  "servico": "catalogo",
+  "dependencias": {
+    "database": "ok",
+    "auth_service": "ok",
+    "log_service": "ok"
+  }
 }
 ```
 
----
+Também existem health checks nos containers `app`, `auth-service`, `log-service`, `redis` e `db`.
 
-## ISW055 · Atividade 4 · Autorização
+## `/metrics`
 
-Professor: [siriani](https://github.com/siriani)
+A aplicação expõe métricas em formato compatível com Prometheus, incluindo:
 
-### Controle de acesso por papel — RBAC
+- quantidade de requisições;
+- método HTTP;
+- rota;
+- status HTTP;
+- soma das durações das requisições.
 
-O backend utiliza os papéis `usuario` e `admin`. A interface apenas melhora a experiência; a decisão é sempre feita no servidor.
-
-#### usuario
-
-- Visualiza o catálogo;
-- gerencia seus favoritos;
-- cria comentários;
-- exclui somente os próprios comentários;
-- acessa a própria conta e redefine a própria senha.
-
-#### admin
-
-Possui todas as permissões de `usuario` e também pode moderar e excluir comentários de qualquer usuário. Em especial: `usuario` pode excluir apenas seus próprios comentários; `admin` pode excluir comentários de qualquer usuário.
-
-### Padrão de autorização utilizado
-
-Este projeto utiliza o **Padrão A — enforcement centralizado**. O catálogo mantém a sessão do usuário e consulta o `auth-service` para obter as permissões atuais antes de ações administrativas. Assim, as regras ficam centralizadas e uma alteração de papel tem efeito imediato.
-
-O custo é uma chamada de rede adicional e a dependência do `auth-service` para decisões de autorização. No **Padrão B**, um JWT assinado poderia carregar claims de papel/permissões e ser validado localmente, reduzindo chamadas, mas alterações de papel poderiam só aparecer quando o token fosse renovado ou expirasse. Essa alternativa não é utilizada aqui.
-
-### Demonstração
-
-1. Faça login como `usuario` e exclua um comentário próprio: sucesso.
-2. Com o mesmo usuário, envie `DELETE /api/comments/:id` para comentário de outra pessoa: `403 Forbidden` e `{"erro":"Acesso negado"}`.
-3. Faça login como `admin` e repita a chamada: sucesso.
-4. Acesse `GET /api/admin/comments` sem autenticação: `401 Unauthorized`.
-5. Acesse a mesma rota como `usuario`: `403 Forbidden`.
-
-Espaço para prints da demonstração:
+Exemplo:
 
 ```text
-[inserir prints aqui]
-```
-
-### Segurança
-
-Foram aplicadas boas práticas compatíveis com o escopo: bcrypt para senhas, autenticação e RBAC no backend, tokens de redefinição aleatórios com hash, expiração de 30 minutos e uso único, queries parametrizadas, validação de entradas, escape de comentários contra XSS, Helmet, cookies HttpOnly/SameSite, rate limiting em endpoints sensíveis, variáveis de ambiente para secrets, erros sem detalhes internos e princípio do menor privilégio. Isso não representa garantia de segurança total; configurações externas, HTTPS e operação do SMTP continuam sendo responsabilidades do ambiente.
-
-### Configuração externa
-
-O cadastro e a recuperação de senha dependem de um servidor SMTP configurado em `MAIL_HOST`, `MAIL_PORT`, `MAIL_USER`, `MAIL_PASSWORD` e `MAIL_FROM`. O catálogo também depende de `TMDB_API_KEY`. Não inclua valores reais no Git.
-
-## Comentários e denúncias
-
-Todos os usuários autenticados podem visualizar todos os comentários de um filme. Cada comentário mostra o autor e a data, mas nunca expõe `senha_hash`, tokens, e-mails ou secrets.
-
-O autor pode excluir somente o próprio comentário. Comentários de outras pessoas exibem a ação **Denunciar**, que aceita motivos controlados como conteúdo ofensivo, discurso de ódio, spam, conteúdo inadequado, assédio ou outro. A denúncia é validada no backend, não permite denunciar o próprio comentário e evita denúncias pendentes duplicadas pelo mesmo usuário.
-
-### Moderação
-
-Administradores possuem uma área separada em `/admin.html`, protegida no backend pela permissão `admin:moderate`. A página oferece:
-
-- contador de denúncias pendentes;
-- total de comentários e denúncias do dia;
-- pesquisa por texto;
-- filtro por filme, data, status e comentários denunciados;
-- paginação;
-- detalhes das denúncias;
-- ações para ignorar ou resolver denúncias;
-- exclusão de comentários com confirmação.
-
-Os títulos dos filmes são obtidos pelo serviço TMDB já existente e mantidos em cache curto, com fallback `Filme #id`. Usuários comuns recebem `401` sem sessão e `403` ao tentar acessar endpoints administrativos.
-
-Endpoints principais:
-
-```text
-GET   /api/comments/:movieId
-POST  /api/comments/:id/report
-GET   /api/comments/counts?movieIds=13,14
-GET   /api/admin/comments
-GET   /api/admin/reports/count
-GET   /api/admin/reports
-PATCH /api/admin/reports/:id
-```
-
-A tabela `comentario_denuncias` é criada por `database/migration-v4.sql` e também está presente no `init.sql`. A migration é idempotente e possui foreign keys e índices para comentário, denunciante, status e data.
-
-## Fluxo geral de autenticação
-
-```text
-                 USUÁRIO
-                    │
-                    ▼
-             Aplicação Web
-                    │
-                    ▼
-                 app:3000
-                    │
-                    │ rede Docker interna
-                    ▼
-             auth-service:3001
-                    │
-                    ▼
-                 MariaDB
-```
-
-Para recuperação de senha:
-
-```text
-Usuário
-   │
-   ▼
-"Esqueci minha senha"
-   │
-   ▼
-app
-   │
-   ▼
-auth-service
-   │
-   ├── gera token
-   ├── salva token
-   └── envia e-mail
-          │
-          ▼
-       Usuário
-          │
-          ▼
-   Link de recuperação
-          │
-          ▼
-     valida token
-          │
-          ▼
-     nova senha
+GET /metrics
 ```
 
 ---
 
-## Tecnologias utilizadas
+# 7. CI/CD — Extra 1
 
-- **Node.js**
-- **Express**
-- **JavaScript**
-- **MySQL2**
-- **MariaDB/MySQL**
-- **bcryptjs**
-- **jsonwebtoken**
-- **Nodemailer**
-- **Docker**
-- **Docker Compose**
-- **HTML**
-- **CSS**
-- **JavaScript**
-- **API TMDB**
+O workflow está em:
 
----
+```text
+.github/workflows/ci-cd.yml
+```
 
-## Atividade acadêmica
+A cada push na `main`:
 
-Projeto desenvolvido como continuação da atividade de serviços desacoplados, com foco na separação da autenticação em um microsserviço independente.
+1. instala e valida o frontend;
+2. gera o build React;
+3. constrói os containers;
+4. sobe o ambiente completo;
+5. verifica o `/health` real;
+6. verifica `/metrics`;
+7. verifica o `auth-service`;
+8. verifica o `log-service`;
+9. publica as imagens no Docker Hub.
 
-### Principais conceitos aplicados
+As imagens recebem duas tags:
 
-- Arquitetura de microsserviços;
-- Containers Docker;
-- Comunicação entre serviços;
-- Rede interna Docker;
-- API REST;
-- Autenticação;
-- Autorização por papéis;
-- JWT;
-- Hash de senhas;
-- Recuperação de senha;
-- Tokens com expiração;
-- Tokens de uso único;
-- Integração com serviço SMTP;
-- Persistência em banco de dados.
+```text
+<imagem>:<SHA-do-commit>
+<imagem>:latest
+```
 
-Professor responsável:
+Imagens:
 
-**Siriani**  
-GitHub: `github.com/siriani`
+```text
+joicesoato/catalogo-filmes-tom-hanks
+joicesoato/catalogo-filmes-tom-hanks-auth
+joicesoato/catalogo-filmes-tom-hanks-log
+```
 
----
+### Secrets do GitHub
 
-## Observação sobre o envio de e-mails
+Configurar em **Settings → Secrets and variables → Actions**:
 
-A funcionalidade de envio de e-mails foi implementada utilizando **SMTP/Nodemailer**, com suporte a provedor externo.
+```text
+DOCKERHUB_USERNAME
+DOCKERHUB_TOKEN
+PORTAINER_WEBHOOK   (opcional)
+```
 
-Durante a etapa de entrega, o provedor SMTP utilizado apresentou uma restrição relacionada à ativação da conta SMTP, impedindo a validação prática do envio das mensagens.
+Nenhuma senha de banco, JWT, TMDB ou SMTP deve ser colocada no workflow.
 
-A implementação do microsserviço contempla a geração, armazenamento, expiração e validação dos tokens de confirmação e recuperação de senha.
+### Deploy automático
+
+Se o `PORTAINER_WEBHOOK` estiver configurado, o workflow chama o webhook após a publicação das imagens.
 
 ---
 
-## Autoria
+# 8. Execução local
 
-**Joice Soato**
+Crie `.env` a partir de `.env.example` e preencha os valores reais.
 
-Projeto acadêmico — Catálogo de Filmes com Microsserviço de Autenticação.
+Depois:
+
+```bash
+docker compose up -d --build
+```
+
+Verifique:
+
+```bash
+docker compose ps
+```
+
+Health:
+
+```bash
+curl http://localhost:3000/health
+```
+
+Métricas:
+
+```bash
+curl http://localhost:3000/metrics
+```
+
+A aplicação fica em:
+
+```text
+http://localhost:3000
+```
+
+---
+
+# 9. Testes da auditoria
+
+Depois de fazer login, favoritar, comentar e realizar uma tentativa negada de autorização, um administrador pode consultar:
+
+```bash
+curl -H "Cookie: connect.sid=SESSAO_DO_ADMIN" \
+  http://localhost:3000/api/admin/logs?limit=20
+```
+
+Ou utilizar a área de auditoria do painel administrativo.
+
+Para testar diretamente o Redis dentro do container:
+
+```bash
+docker compose exec redis redis-cli XREVRANGE audit:events + - COUNT 10
+```
+
+---
+
+# 10. Portainer
+
+Para publicação utilizando a infraestrutura externa existente, foi incluído:
+
+```text
+docker-compose.portainer.yml
+```
+
+Essa composição **não cria outro MariaDB**. Ela utiliza o banco externo já existente e adiciona o Redis persistente para a auditoria.
+
+A aplicação continua publicada em:
+
+```text
+8211:3000
+```
+
+O `auth-service`, `log-service`, Redis e banco continuam sem portas públicas.
+
+O valor de `IMAGE_TAG` pode ser configurado com o SHA do commit para demonstrar exatamente qual versão está em execução.
+
+---
+
+# 11. Banco de dados
+
+As tabelas principais são:
+
+- `usuarios`;
+- `favoritos`;
+- `comentarios`;
+- `reset_tokens`;
+- `comentario_denuncias`.
+
+`init.sql` é utilizado na criação de um banco novo. Em uma instalação existente, devem ser aplicadas as migrations correspondentes sem destruir o volume.
+
+**Não utilizar `docker compose down -v` em um ambiente com dados que precisam ser preservados.**
+
+---
+
+# 12. Estrutura principal
+
+```text
+catalogo-de-filmes-cloud-2/
+├── .github/workflows/ci-cd.yml
+├── auth-service/
+├── database/
+├── frontend/
+│   └── src/
+├── log-service/
+├── middleware/
+├── public/
+├── services/
+├── Dockerfile
+├── docker-compose.yml
+├── docker-compose.portainer.yml
+├── init.sql
+├── server.js
+└── README.md
+```
+
+O diretório `public/` antigo foi preservado como referência/compatibilidade, enquanto a aplicação de produção utiliza o build React em `frontend/dist`.
+
+---
+
+# 13. Entrega e evidências
+
+Para a apresentação/entrega, recomenda-se anexar prints de:
+
+1. GitHub Actions com workflow verde;
+2. containers `app`, `auth-service`, `log-service`, `redis` e `db` saudáveis;
+3. `/health` retornando `200`;
+4. `/health` retornando `503` durante uma simulação controlada de dependência indisponível, se solicitado;
+5. `/metrics` com contadores;
+6. usuário comum recebendo `403` em ação administrativa;
+7. administrador acessando a moderação;
+8. painel de auditoria mostrando eventos;
+9. Portainer mostrando as imagens/versões implantadas.
+
+---
+
+## Observação de segurança
+
+Arquivos `.env`, tokens, senhas, chaves JWT, credenciais SMTP e chaves da TMDB não devem ser commitados. Caso uma credencial real tenha sido exposta durante testes, ela deve ser rotacionada antes da entrega final.

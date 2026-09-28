@@ -85,4 +85,5 @@ export const endpoints = {
   }>(`/api/admin/comments?${query}`),
   reports: () => api.get<{ denuncias: Report[] }>("/api/admin/reports"),
   updateReport: (id: number, status: "ignorada" | "resolvida") => api.patch<ApiMessage>(`/api/admin/reports/${id}`, { status }),
+  auditLogs: (limit = 50) => api.get<{ logs: import("../types").AuditLog[] }>(`/api/admin/logs?limit=${limit}`),
 };

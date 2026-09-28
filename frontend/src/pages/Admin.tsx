@@ -5,7 +5,7 @@ import Modal from "../components/Modal";
 import Toast from "../components/Toast";
 import { useAuth } from "../context/AuthContext";
 import { endpoints } from "../services/api";
-import type { ModerationComment, Movie, Report } from "../types";
+import type { AuditLog, ModerationComment, Movie, Report } from "../types";
 
 const pageSize = 10;
 
@@ -28,6 +28,7 @@ export default function Admin() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [selected, setSelected] = useState<ModerationComment | null>(null);
+  const [logs, setLogs] = useState<AuditLog[]>([]);
 
   const load = useCallback(async (pageNumber = page) => {
     setLoading(true); setError("");
@@ -39,11 +40,11 @@ export default function Admin() {
     if (status) query.set("status", status);
     if (reportedOnly) query.set("reportedOnly", "true");
     try {
-      const [commentResult, countResult, reportResult] = await Promise.all([
-        endpoints.moderationComments(query), endpoints.reportCount(), endpoints.reports(),
+      const [commentResult, countResult, reportResult, logResult] = await Promise.all([
+        endpoints.moderationComments(query), endpoints.reportCount(), endpoints.reports(), endpoints.auditLogs(50),
       ]);
       setComments(commentResult.comentarios); setTotal(commentResult.total); setPages(Math.max(commentResult.paginas, 1));
-      setPending(countResult.pendentes); setReports(reportResult.denuncias);
+      setPending(countResult.pendentes); setReports(reportResult.denuncias); setLogs(logResult.logs);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Não foi possível carregar a moderação."); }
     finally { setLoading(false); }
   }, [from, movieId, page, reportedOnly, search, status, to]);
@@ -87,6 +88,7 @@ export default function Admin() {
     <div className="admin-columns"><section className="admin-list-panel"><div className="panel-title"><div><span className="eyebrow">REVISÃO</span><h2>Comentários <small>{total}</small></h2></div><span className="page-counter">Página {page} / {pages}</span></div>
       {loading ? <Loading label="Carregando moderação" /> : error ? <div className="error-panel"><p>{error}</p><button className="button button-secondary" type="button" onClick={() => void refresh()}>Tentar novamente</button></div> : comments.length ? <><div className="moderation-list">{comments.map((comment) => <article className="moderation-item" key={comment.id}><div className="moderation-item-top"><div><span className="movie-label">{comment.titulo_filme}</span><strong>{comment.usuario_nome}</strong></div><time>{new Date(comment.criado_em).toLocaleString("pt-BR")}</time></div><p>{comment.texto}</p><div className="moderation-item-footer"><span className={`status-badge ${comment.denuncias_pendentes ? "status-pending" : ""}`}>{comment.denuncias_pendentes} pendente(s)</span><div><button className="text-action" type="button" onClick={() => setSelected(comment)}>Detalhes</button><button className="text-action danger-text" type="button" onClick={() => void deleteComment(comment)}>Excluir</button></div></div></article>)}</div><div className="pagination"><button className="button button-secondary" type="button" disabled={page <= 1} onClick={() => { const next = page - 1; setPage(next); void load(next); }}>← Anterior</button><span>{page} de {pages}</span><button className="button button-secondary" type="button" disabled={page >= pages} onClick={() => { const next = page + 1; setPage(next); void load(next); }}>Próxima →</button></div></> : <EmptyState title="Nenhum comentário" description="Não há comentários correspondentes aos filtros atuais." />}
     </section><aside className="admin-reports"><div className="panel-title"><div><span className="eyebrow">FILA DE ANÁLISE</span><h2>Denúncias <small>{pendingReports.length}</small></h2></div></div>{pendingReports.length ? <div className="report-list">{pendingReports.map((report) => <button className="report-row" key={report.id} type="button" onClick={() => setSelected(comments.find((comment) => comment.id === report.comentario_id) || ({ id: report.comentario_id, tmdb_movie_id: report.tmdb_movie_id, texto: report.texto, criado_em: report.criado_em, usuario_id: 0, usuario_nome: report.autor_nome, titulo_filme: report.titulo_filme, denuncias_pendentes: 1, motivos: [report.motivo] } as ModerationComment))}><span className="report-status-dot" /><span><strong>{report.titulo_filme}</strong><small>{report.motivo}</small><time>{new Date(report.criado_em).toLocaleString("pt-BR")}</time></span><b aria-hidden="true">↗</b></button>)}</div> : <p className="quiet-empty">Nenhuma denúncia pendente.</p>}</aside></div>
+    <section className="admin-log-panel"><div className="panel-title"><div><span className="eyebrow">AUDITORIA</span><h2>Últimos eventos <small>{logs.length}</small></h2></div><span className="page-counter">Redis Stream</span></div>{logs.length ? <div className="audit-log-list">{logs.map((log) => <article className="audit-log-row" key={log.id}><div><strong>{log.acao}</strong><span>Usuário {log.usuario_id ?? "não identificado"}</span></div><time>{new Date(log.timestamp).toLocaleString("pt-BR")}</time></article>)}</div> : <p className="quiet-empty">Nenhum evento registrado ainda.</p>}</section>
     {selected && <Modal title="Detalhes do comentário" onClose={() => setSelected(null)}><div className="modal-body"><div className="detail-summary"><span className="eyebrow">{selected.titulo_filme}</span><strong>{selected.usuario_nome}</strong><time>{new Date(selected.criado_em).toLocaleString("pt-BR")}</time><p>{selected.texto}</p></div><h3>Denúncias relacionadas</h3><ul className="report-detail-list">{reports.filter((report) => Number(report.comentario_id) === selected.id).map((report) => <li key={report.id}><strong>{report.motivo}</strong><span>{report.denunciante_nome} · {new Date(report.criado_em).toLocaleString("pt-BR")} · <span className={`status-badge status-${report.status}`}>{report.status}</span></span></li>)}{!reports.some((report) => Number(report.comentario_id) === selected.id) && <li>Este comentário não possui denúncias.</li>}</ul><div className="modal-actions"><button className="button button-secondary" type="button" onClick={() => void updateReports("ignorada")} disabled={!reports.some((report) => Number(report.comentario_id) === selected.id && report.status === "pendente")}>Ignorar denúncias</button><button className="button button-secondary" type="button" onClick={() => void updateReports("resolvida")} disabled={!reports.some((report) => Number(report.comentario_id) === selected.id && report.status === "pendente")}>Resolver</button><button className="button button-danger" type="button" onClick={() => void deleteComment(selected)}>Excluir comentário</button></div></div></Modal>}
   </section>;
 }

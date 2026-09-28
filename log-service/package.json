@@ -1,0 +1,14 @@
+{
+  "name": "catalogo-filmes-log-service",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^5.2.1",
+    "helmet": "^8.3.0",
+    "redis": "^5.8.2"
+  }
+}

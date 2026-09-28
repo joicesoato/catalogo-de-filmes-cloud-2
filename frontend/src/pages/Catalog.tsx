@@ -44,10 +44,13 @@ export default function Catalog() {
   }
 
   const visibleMovies = movies.filter((movie) => movie.titulo.toLocaleLowerCase("pt-BR").includes(query.toLocaleLowerCase("pt-BR")));
-  const featured = movies[0];
+  const featured =
+  movies.find((movie) => movie.titulo.toLowerCase() === "forrest gump") ??
+  movies.find((movie) => Boolean(movie.poster)) ??
+  movies[0];
 
   return (
-    <div className="catalog-page">
+    <div className="cnano frontend/src/pages/Catalog.tsxatalog-page">
       {featured && <section className="catalog-feature">
         {featured.poster && <img className="feature-backdrop" src={featured.poster} alt="" />}
         <div className="feature-scrim" />

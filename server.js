@@ -12,6 +12,7 @@ const {
   consultarPermissao
 } = require("./middleware/auth");
 const { buscarTomHanks } = require("./services/tmdb");
+const { registrarAuditoria } = require("./services/audit");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -67,7 +68,7 @@ app.get(
   exigirPermissao("admin:moderate"),
   (req, res) => res.sendFile(path.join(__dirname, "public", "admin.html"))
 );
-app.use(express.static("public"));
+app.use(express.static("public", { index: false }));
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -78,6 +79,23 @@ const authLimiter = rateLimit({
 });
 
 const AUTH_SERVICE_URL = process.env.AUTH_SERVICE_URL || "http://auth-service:3001";
+const LOG_SERVICE_URL = process.env.LOG_SERVICE_URL || "http://log-service:3002";
+
+const metricas = new Map();
+
+app.use((req, res, next) => {
+  const inicio = process.hrtime.bigint();
+  res.on("finish", () => {
+    const rota = req.route?.path || req.path || "unknown";
+    const chave = `${req.method} ${rota} ${res.statusCode}`;
+    const atual = metricas.get(chave) || { count: 0, totalMs: 0 };
+    const duracaoMs = Number(process.hrtime.bigint() - inicio) / 1e6;
+    atual.count += 1;
+    atual.totalMs += duracaoMs;
+    metricas.set(chave, atual);
+  });
+  next();
+});
 let titulosFilmesCache = new Map();
 let titulosFilmesCacheExpiraEm = 0;
 
@@ -152,6 +170,7 @@ app.post("/api/auth/login", authLimiter, async (req, res) => {
 
     req.session.usuario = dados.usuario;
     req.session.authToken = dados.token;
+    void registrarAuditoria(req, "login", { resultado: "sucesso" });
     res.json({ mensagem: dados.mensagem, usuario: dados.usuario });
   } catch (erro) {
     console.error("Erro ao chamar auth-service:", erro.message);
@@ -160,12 +179,14 @@ app.post("/api/auth/login", authLimiter, async (req, res) => {
 });
 
 app.post("/api/auth/logout", (req, res) => {
+  const usuarioId = req.session.usuario?.id;
   req.session.destroy((erro) => {
     if (erro) {
       console.error("Erro ao fazer logout:", erro.message);
       return res.status(500).json({ erro: "Não foi possível fazer logout." });
     }
     res.clearCookie("connect.sid");
+    if (usuarioId) void registrarAuditoria({ session: { usuario: { id: usuarioId } }, ip: req.ip }, "logout");
     res.json({ mensagem: "Logout realizado com sucesso." });
   });
 });
@@ -234,6 +255,7 @@ app.post("/api/favorites", exigirLogin, async (req, res) => {
        VALUES (?, ?, ?, ?)`,
       [req.session.usuario.id, tmdb_movie_id, titulo.trim(), poster_path || null]
     );
+    void registrarAuditoria(req, "favorite_add", { tmdb_movie_id: Number(tmdb_movie_id), titulo: titulo.trim() });
     res.status(201).json({ mensagem: "Filme adicionado aos favoritos." });
   } catch (erro) {
     if (erro.code === "ER_DUP_ENTRY") {
@@ -254,6 +276,7 @@ app.delete("/api/favorites/:id", exigirLogin, async (req, res) => {
       [req.params.id, req.session.usuario.id]
     );
     if (!resultado.affectedRows) return res.status(404).json({ erro: "Favorito não encontrado." });
+    void registrarAuditoria(req, "favorite_remove", { favorito_id: Number(req.params.id) });
     res.json({ mensagem: "Favorito removido." });
   } catch (erro) {
     console.error("Erro ao remover favorito:", erro.message);
@@ -319,6 +342,7 @@ app.post("/api/comments", exigirLogin, async (req, res) => {
       "INSERT INTO comentarios (usuario_id, tmdb_movie_id, texto) VALUES (?, ?, ?)",
       [req.session.usuario.id, tmdb_movie_id, texto.trim()]
     );
+    void registrarAuditoria(req, "comment_create", { comentario_id: resultado.insertId, tmdb_movie_id: Number(tmdb_movie_id) });
     res.status(201).json({ mensagem: "Comentário salvo.", id: resultado.insertId });
   } catch (erro) {
     console.error("Erro ao adicionar comentário:", erro.message);
@@ -375,11 +399,15 @@ app.delete("/api/comments/:id", exigirLogin, async (req, res) => {
           ? res.status(401).json({ erro: "Você precisa estar logado." })
           : res.status(503).json({ erro: "Serviço de autorização indisponível." });
       }
-      if (!autorizacao.permitido) return res.status(403).json({ erro: "Acesso negado" });
+      if (!autorizacao.permitido) {
+        void registrarAuditoria(req, "access_denied_403", { permissao: "comments:delete:any", comentario_id: Number(comentarioId) });
+        return res.status(403).json({ erro: "Acesso negado" });
+      }
     }
 
     const [resultado] = await pool.execute("DELETE FROM comentarios WHERE id = ?", [comentarioId]);
     if (!resultado.affectedRows) return res.status(404).json({ erro: "Comentário não encontrado." });
+    void registrarAuditoria(req, "comment_delete", { comentario_id: Number(comentarioId) });
     res.json({ mensagem: "Comentário removido." });
   } catch (erro) {
     console.error("Erro ao remover comentário:", erro.message);
@@ -495,6 +523,21 @@ app.patch("/api/admin/reports/:id", exigirPermissao("admin:moderate"), async (re
   }
 });
 
+app.get("/api/admin/logs", exigirPermissao("admin:moderate"), async (req, res) => {
+  try {
+    const limite = Math.min(Math.max(Number.parseInt(req.query.limit || "50", 10), 1), 100);
+    const resposta = await fetch(`${LOG_SERVICE_URL}/logs?limit=${limite}`, {
+      headers: { "X-Internal-Secret": process.env.INTERNAL_SERVICE_SECRET || "" },
+      signal: AbortSignal.timeout(3000)
+    });
+    const dados = await resposta.json();
+    res.status(resposta.status).json(dados);
+  } catch (erro) {
+    console.error("Erro ao consultar auditoria:", erro.message);
+    res.status(503).json({ erro: "Serviço de logs indisponível." });
+  }
+});
+
 app.get("/api/poster", async (req, res) => {
   try {
     const imagePath = req.query.path;
@@ -512,12 +555,64 @@ app.get("/api/poster", async (req, res) => {
 });
 
 app.get("/health", async (req, res) => {
+  const dependencias = {};
+  let pronto = true;
+
   try {
     await pool.query("SELECT 1");
-    res.json({ status: "ok", servico: "catalogo" });
+    dependencias.database = "ok";
   } catch {
-    res.status(500).json({ status: "erro" });
+    dependencias.database = "indisponivel";
+    pronto = false;
   }
+
+  for (const [nome, url] of [["auth_service", `${AUTH_SERVICE_URL}/health`], ["log_service", `${LOG_SERVICE_URL}/health`]]) {
+    try {
+      const resposta = await fetch(url, { signal: AbortSignal.timeout(2000) });
+      dependencias[nome] = resposta.ok ? "ok" : "indisponivel";
+      if (!resposta.ok) pronto = false;
+    } catch {
+      dependencias[nome] = "indisponivel";
+      pronto = false;
+    }
+  }
+
+  res.status(pronto ? 200 : 503).json({
+    status: pronto ? "ok" : "erro",
+    servico: "catalogo",
+    dependencias
+  });
+});
+
+app.get("/metrics", (req, res) => {
+  const linhas = [
+    "# HELP http_requests_total Total de requisições HTTP por método, rota e status.",
+    "# TYPE http_requests_total counter"
+  ];
+
+  for (const [chave, valor] of metricas.entries()) {
+    const [metodo, ...resto] = chave.split(" ");
+    const status = resto.pop();
+    const rota = resto.join(" ").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    linhas.push(`http_requests_total{method="${metodo}",route="${rota}",status="${status}"} ${valor.count}`);
+  }
+
+  linhas.push("# HELP http_request_duration_ms_sum Soma da duração das requisições em milissegundos.");
+  linhas.push("# TYPE http_request_duration_ms_sum counter");
+  for (const [chave, valor] of metricas.entries()) {
+    const [metodo, ...resto] = chave.split(" ");
+    const status = resto.pop();
+    const rota = resto.join(" ").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    linhas.push(`http_request_duration_ms_sum{method="${metodo}",route="${rota}",status="${status}"} ${valor.totalMs.toFixed(2)}`);
+  }
+
+  res.type("text/plain").send(`${linhas.join("\n")}\n`);
+});
+
+const frontendDist = path.join(__dirname, "frontend", "dist");
+app.use(express.static(frontendDist, { index: false }));
+app.get(/^(?!\/api(?:\/|$)|\/health$|\/metrics$).*/, (req, res) => {
+  res.sendFile(path.join(frontendDist, "index.html"));
 });
 
 app.listen(PORT, async () => {
