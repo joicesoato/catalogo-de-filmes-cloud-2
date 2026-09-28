@@ -3,6 +3,15 @@ services:
     build: .
     environment:
       PORT: 3000
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
+      SESSION_SECRET: ${SESSION_SECRET}
+      INTERNAL_SERVICE_SECRET: ${INTERNAL_SERVICE_SECRET}
+      TMDB_API_KEY: ${TMDB_API_KEY}
+      APP_URL: ${APP_URL:-http://localhost:3000}
       AUTH_SERVICE_URL: http://auth-service:3001
       LOG_SERVICE_URL: http://log-service:3002
       TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-1}

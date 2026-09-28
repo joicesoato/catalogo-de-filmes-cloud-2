@@ -49,7 +49,7 @@ Somente o `app` publica porta para o host. `auth-service`, `log-service`, MariaD
 
 ---
 
-# 2. Frontend React
+## 2. Frontend React
 
 O frontend foi migrado para **React + TypeScript + Vite**, mantendo a API e a autoridade de segurança no backend.
 
@@ -71,17 +71,17 @@ Durante o build Docker, o Vite gera `frontend/dist` e o Express serve essa vers�
 
 ---
 
-# 3. Autenticação e segurança
+## 3. Autenticação e segurança
 
-## Senhas
+### Senhas
 
 As senhas nunca são armazenadas em texto puro. O `auth-service` utiliza `bcryptjs` com fator de custo 12.
 
-## JWT
+### JWT
 
 O JWT é emitido pelo `auth-service` e utilizado na comunicação interna entre o backend e o serviço de autenticação.
 
-## Sessão
+### Sessão
 
 O navegador recebe apenas o cookie de sessão `connect.sid`, configurado com:
 
@@ -90,7 +90,7 @@ O navegador recebe apenas o cookie de sessão `connect.sid`, configurado com:
 - `Secure` em produção;
 - validade limitada.
 
-## Recuperação de senha
+### Recuperação de senha
 
 Os tokens de recuperação são:
 
@@ -99,7 +99,7 @@ Os tokens de recuperação são:
 - válidos por 30 minutos;
 - de uso único.
 
-## Proteções adicionais
+### Proteções adicionais
 
 - Helmet;
 - Content Security Policy;
@@ -114,7 +114,7 @@ Os tokens de recuperação são:
 
 ---
 
-# 4. RBAC — Atividade 4
+## 4. RBAC — Atividade 4
 
 O sistema possui dois papéis:
 
@@ -164,13 +164,13 @@ Assim, uma alteração de papel no banco é considerada na próxima consulta de 
 
 ---
 
-# 5. Auditoria com Redis — Atividade 5
+## 5. Auditoria com Redis — Atividade 5
 
 Foi criado um serviço separado chamado `log-service`.
 
 O serviço não possui porta publicada para o host e se comunica somente pela rede interna Docker.
 
-## Redis Streams
+### Redis Streams
 
 Os eventos são armazenados no stream:
 
@@ -187,7 +187,7 @@ O Redis utiliza AOF para persistência:
 
 Os eventos são limitados a aproximadamente 5.000 registros para evitar crescimento ilimitado.
 
-## Eventos registrados
+### Eventos registrados
 
 A aplicação registra, entre outros:
 
@@ -227,9 +227,9 @@ O frontend administrativo exibe os eventos recentes em uma área de auditoria.
 
 ---
 
-# 6. Health checks e métricas — Extra 2
+## 6. Health checks e métricas — Extra 2
 
-## `/health`
+### `/health`
 
 O endpoint do `app` verifica:
 
@@ -265,7 +265,7 @@ Exemplo:
 
 Também existem health checks nos containers `app`, `auth-service`, `log-service`, `redis` e `db`.
 
-## `/metrics`
+### `/metrics`
 
 A aplicação expõe métricas em formato compatível com Prometheus, incluindo:
 
@@ -283,7 +283,7 @@ GET /metrics
 
 ---
 
-# 7. CI/CD — Extra 1
+## 7. CI/CD — Extra 1
 
 O workflow está em:
 
@@ -336,7 +336,7 @@ Se o `PORTAINER_WEBHOOK` estiver configurado, o workflow chama o webhook após a
 
 ---
 
-# 8. Execução local
+## 8. Execução local
 
 Crie `.env` a partir de `.env.example` e preencha os valores reais.
 
@@ -372,7 +372,7 @@ http://localhost:3000
 
 ---
 
-# 9. Testes da auditoria
+## 9. Testes da auditoria
 
 Depois de fazer login, favoritar, comentar e realizar uma tentativa negada de autorização, um administrador pode consultar:
 
@@ -391,7 +391,7 @@ docker compose exec redis redis-cli XREVRANGE audit:events + - COUNT 10
 
 ---
 
-# 10. Portainer
+## 10. Portainer
 
 Para publicação utilizando a infraestrutura externa existente, foi incluído:
 
@@ -413,7 +413,7 @@ O valor de `IMAGE_TAG` pode ser configurado com o SHA do commit para demonstrar 
 
 ---
 
-# 11. Banco de dados
+## 11. Banco de dados
 
 As tabelas principais são:
 
@@ -429,7 +429,7 @@ As tabelas principais são:
 
 ---
 
-# 12. Estrutura principal
+## 12. Estrutura principal
 
 ```text
 catalogo-de-filmes-cloud-2/
@@ -454,7 +454,7 @@ O diretório `public/` antigo foi preservado como referência/compatibilidade, e
 
 ---
 
-# 13. Entrega e evidências
+## 13. Entrega e evidências
 
 Para a apresentação/entrega, recomenda-se anexar prints de:
 
