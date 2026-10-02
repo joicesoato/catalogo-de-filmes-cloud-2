@@ -1,0 +1,996 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Catálogo de Filmes — API",
+    "version": "6.0.0",
+    "description": "OpenAPI da aplicação principal. A identidade do perfil é derivada da sessão autenticada; o backend não confia em usuario_id enviado no corpo."
+  },
+  "servers": [
+    {
+      "url": "/"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Autenticação"
+    },
+    {
+      "name": "Catálogo"
+    },
+    {
+      "name": "Favoritos"
+    },
+    {
+      "name": "Perfil"
+    },
+    {
+      "name": "Comentários"
+    },
+    {
+      "name": "Administração"
+    },
+    {
+      "name": "Observabilidade"
+    }
+  ],
+  "paths": {
+    "/api/auth/register": {
+      "post": {
+        "tags": [
+          "Autenticação"
+        ],
+        "summary": "Criar conta",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Cadastro criado"
+          },
+          "400": {
+            "description": "Dados inválidos"
+          },
+          "409": {
+            "description": "E-mail já cadastrado"
+          },
+          "500": {
+            "description": "Falha ao enviar confirmação"
+          }
+        }
+      }
+    },
+    "/api/auth/login": {
+      "post": {
+        "tags": [
+          "Autenticação"
+        ],
+        "summary": "Entrar no sistema",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Login realizado"
+          },
+          "401": {
+            "description": "Credenciais inválidas"
+          },
+          "403": {
+            "description": "E-mail não confirmado"
+          },
+          "503": {
+            "description": "Auth indisponível"
+          }
+        }
+      }
+    },
+    "/api/auth/logout": {
+      "post": {
+        "tags": [
+          "Autenticação"
+        ],
+        "summary": "Encerrar sessão",
+        "security": [
+          {
+            "cookieAuth": {
+              "type": "apiKey",
+              "in": "cookie",
+              "name": "connect.sid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Logout realizado"
+          }
+        }
+      }
+    },
+    "/api/auth/me": {
+      "get": {
+        "tags": [
+          "Autenticação"
+        ],
+        "summary": "Consultar sessão atual",
+        "responses": {
+          "200": {
+            "description": "Estado da sessão"
+          }
+        }
+      }
+    },
+    "/api/auth/verify-email": {
+      "get": {
+        "tags": [
+          "Autenticação"
+        ],
+        "summary": "Confirmar e-mail",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "E-mail confirmado"
+          },
+          "400": {
+            "description": "Token inválido"
+          }
+        }
+      }
+    },
+    "/api/auth/forgot-password": {
+      "post": {
+        "tags": [
+          "Autenticação"
+        ],
+        "summary": "Solicitar recuperação de senha",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "email"
+                ],
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "format": "email"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Solicitação processada"
+          },
+          "400": {
+            "description": "E-mail ausente"
+          }
+        }
+      }
+    },
+    "/api/auth/reset-password": {
+      "post": {
+        "tags": [
+          "Autenticação"
+        ],
+        "summary": "Redefinir senha",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "token",
+                  "novaSenha"
+                ],
+                "properties": {
+                  "token": {
+                    "type": "string"
+                  },
+                  "novaSenha": {
+                    "type": "string",
+                    "minLength": 6
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Senha alterada"
+          },
+          "400": {
+            "description": "Token ou senha inválidos"
+          }
+        }
+      }
+    },
+    "/api/movies": {
+      "get": {
+        "tags": [
+          "Catálogo"
+        ],
+        "summary": "Listar filmes de Tom Hanks",
+        "security": [
+          {
+            "cookieAuth": {
+              "type": "apiKey",
+              "in": "cookie",
+              "name": "connect.sid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lista de filmes"
+          },
+          "401": {
+            "description": "Login necessário"
+          },
+          "500": {
+            "description": "Falha na TMDB"
+          }
+        }
+      }
+    },
+    "/api/favorites": {
+      "get": {
+        "tags": [
+          "Favoritos"
+        ],
+        "summary": "Listar favoritos do usuário logado",
+        "security": [
+          {
+            "cookieAuth": {
+              "type": "apiKey",
+              "in": "cookie",
+              "name": "connect.sid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Favoritos"
+          },
+          "401": {
+            "description": "Login necessário"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Favoritos"
+        ],
+        "summary": "Adicionar favorito",
+        "security": [
+          {
+            "cookieAuth": {
+              "type": "apiKey",
+              "in": "cookie",
+              "name": "connect.sid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FavoriteRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Adicionado"
+          },
+          "400": {
+            "description": "Dados inválidos"
+          },
+          "409": {
+            "description": "Já favoritado"
+          }
+        }
+      }
+    },
+    "/api/favorites/{id}": {
+      "delete": {
+        "tags": [
+          "Favoritos"
+        ],
+        "summary": "Remover favorito próprio",
+        "security": [
+          {
+            "cookieAuth": {
+              "type": "apiKey",
+              "in": "cookie",
+              "name": "connect.sid"
+            }
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Removido"
+          },
+          "400": {
+            "description": "ID inválido"
+          },
+          "404": {
+            "description": "Favorito não encontrado"
+          },
+          "401": {
+            "description": "Login necessário"
+          }
+        }
+      }
+    },
+    "/api/profile/{id}": {
+      "get": {
+        "tags": [
+          "Perfil"
+        ],
+        "summary": "Consultar perfil e favoritos",
+        "security": [
+          {
+            "cookieAuth": {
+              "type": "apiKey",
+              "in": "cookie",
+              "name": "connect.sid"
+            }
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Perfil"
+          },
+          "400": {
+            "description": "ID inválido"
+          },
+          "404": {
+            "description": "Perfil não encontrado"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Perfil"
+        ],
+        "summary": "Editar apenas o próprio perfil",
+        "security": [
+          {
+            "cookieAuth": {
+              "type": "apiKey",
+              "in": "cookie",
+              "name": "connect.sid"
+            }
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProfileUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Perfil atualizado"
+          },
+          "400": {
+            "description": "Dados inválidos"
+          },
+          "401": {
+            "description": "Login necessário"
+          },
+          "403": {
+            "description": "Tentativa de editar outro perfil"
+          }
+        }
+      }
+    },
+    "/api/profile/{id}/avatar": {
+      "post": {
+        "tags": [
+          "Perfil"
+        ],
+        "summary": "Enviar foto do próprio perfil para o MinIO",
+        "security": [
+          {
+            "cookieAuth": {
+              "type": "apiKey",
+              "in": "cookie",
+              "name": "connect.sid"
+            }
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "foto"
+                ],
+                "properties": {
+                  "foto": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Foto enviada"
+          },
+          "400": {
+            "description": "Imagem inválida ou maior que 5 MB"
+          },
+          "401": {
+            "description": "Login necessário"
+          },
+          "403": {
+            "description": "Tentativa de editar outro perfil"
+          },
+          "500": {
+            "description": "Falha no armazenamento"
+          }
+        }
+      }
+    },
+    "/api/comments/counts": {
+      "get": {
+        "tags": [
+          "Comentários"
+        ],
+        "summary": "Contar comentários por filme",
+        "security": [
+          {
+            "cookieAuth": {
+              "type": "apiKey",
+              "in": "cookie",
+              "name": "connect.sid"
+            }
+          }
+        ],
+        "parameters": [
+          {
+            "name": "movieIds",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "example": "1,2,3"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Contagens"
+          }
+        }
+      }
+    },
+    "/api/comments/{movieId}": {
+      "get": {
+        "tags": [
+          "Comentários"
+        ],
+        "summary": "Listar comentários de um filme",
+        "security": [
+          {
+            "cookieAuth": {
+              "type": "apiKey",
+              "in": "cookie",
+              "name": "connect.sid"
+            }
+          }
+        ],
+        "parameters": [
+          {
+            "name": "movieId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Comentários"
+          },
+          "400": {
+            "description": "ID inválido"
+          }
+        }
+      }
+    },
+    "/api/comments": {
+      "post": {
+        "tags": [
+          "Comentários"
+        ],
+        "summary": "Criar comentário",
+        "security": [
+          {
+            "cookieAuth": {
+              "type": "apiKey",
+              "in": "cookie",
+              "name": "connect.sid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "tmdb_movie_id",
+                  "texto"
+                ],
+                "properties": {
+                  "tmdb_movie_id": {
+                    "type": "integer"
+                  },
+                  "texto": {
+                    "type": "string",
+                    "maxLength": 1000
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Criado"
+          },
+          "400": {
+            "description": "Dados inválidos"
+          }
+        }
+      }
+    },
+    "/api/comments/{id}": {
+      "delete": {
+        "tags": [
+          "Comentários"
+        ],
+        "summary": "Excluir comentário próprio ou autorizado pelo RBAC",
+        "security": [
+          {
+            "cookieAuth": {
+              "type": "apiKey",
+              "in": "cookie",
+              "name": "connect.sid"
+            }
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Excluído"
+          },
+          "403": {
+            "description": "Sem permissão"
+          },
+          "404": {
+            "description": "Não encontrado"
+          }
+        }
+      }
+    },
+    "/api/comments/{id}/report": {
+      "post": {
+        "tags": [
+          "Comentários"
+        ],
+        "summary": "Denunciar comentário de terceiro",
+        "security": [
+          {
+            "cookieAuth": {
+              "type": "apiKey",
+              "in": "cookie",
+              "name": "connect.sid"
+            }
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "motivo"
+                ],
+                "properties": {
+                  "motivo": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 500
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Denúncia registrada"
+          },
+          "400": {
+            "description": "Dados inválidos"
+          },
+          "409": {
+            "description": "Denúncia duplicada"
+          }
+        }
+      }
+    },
+    "/api/admin/reports/count": {
+      "get": {
+        "tags": [
+          "Administração"
+        ],
+        "summary": "Contar denúncias pendentes",
+        "security": [
+          {
+            "cookieAuth": {
+              "type": "apiKey",
+              "in": "cookie",
+              "name": "connect.sid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Contagem"
+          },
+          "403": {
+            "description": "Admin necessário"
+          }
+        }
+      }
+    },
+    "/api/admin/comments": {
+      "get": {
+        "tags": [
+          "Administração"
+        ],
+        "summary": "Listar comentários para moderação",
+        "security": [
+          {
+            "cookieAuth": {
+              "type": "apiKey",
+              "in": "cookie",
+              "name": "connect.sid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Comentários"
+          },
+          "403": {
+            "description": "Admin necessário"
+          }
+        }
+      }
+    },
+    "/api/admin/reports": {
+      "get": {
+        "tags": [
+          "Administração"
+        ],
+        "summary": "Listar denúncias",
+        "security": [
+          {
+            "cookieAuth": {
+              "type": "apiKey",
+              "in": "cookie",
+              "name": "connect.sid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Denúncias"
+          },
+          "403": {
+            "description": "Admin necessário"
+          }
+        }
+      }
+    },
+    "/api/admin/reports/{id}": {
+      "patch": {
+        "tags": [
+          "Administração"
+        ],
+        "summary": "Atualizar denúncia",
+        "security": [
+          {
+            "cookieAuth": {
+              "type": "apiKey",
+              "in": "cookie",
+              "name": "connect.sid"
+            }
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "status"
+                ],
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "ignorada",
+                      "resolvida"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Atualizada"
+          },
+          "403": {
+            "description": "Admin necessário"
+          },
+          "404": {
+            "description": "Não encontrada"
+          }
+        }
+      }
+    },
+    "/api/admin/logs": {
+      "get": {
+        "tags": [
+          "Administração"
+        ],
+        "summary": "Consultar auditoria",
+        "security": [
+          {
+            "cookieAuth": {
+              "type": "apiKey",
+              "in": "cookie",
+              "name": "connect.sid"
+            }
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Logs"
+          },
+          "403": {
+            "description": "Admin necessário"
+          },
+          "503": {
+            "description": "Logs indisponíveis"
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": [
+          "Observabilidade"
+        ],
+        "summary": "Readiness da aplicação e dependências",
+        "responses": {
+          "200": {
+            "description": "Pronto"
+          },
+          "503": {
+            "description": "Alguma dependência indisponível"
+          }
+        }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "tags": [
+          "Observabilidade"
+        ],
+        "summary": "Métricas Prometheus",
+        "responses": {
+          "200": {
+            "description": "Métricas em texto"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "cookieAuth": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "connect.sid"
+      }
+    },
+    "parameters": {
+      "Id": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "schemas": {
+      "RegisterRequest": {
+        "type": "object",
+        "required": [
+          "nome",
+          "email",
+          "senha"
+        ],
+        "properties": {
+          "nome": {
+            "type": "string",
+            "maxLength": 100
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "maxLength": 150
+          },
+          "senha": {
+            "type": "string",
+            "minLength": 6
+          }
+        }
+      },
+      "LoginRequest": {
+        "type": "object",
+        "required": [
+          "email",
+          "senha"
+        ],
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "senha": {
+            "type": "string"
+          }
+        }
+      },
+      "FavoriteRequest": {
+        "type": "object",
+        "required": [
+          "tmdb_movie_id",
+          "titulo"
+        ],
+        "properties": {
+          "tmdb_movie_id": {
+            "type": "integer"
+          },
+          "titulo": {
+            "type": "string",
+            "maxLength": 255
+          },
+          "poster_path": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "ProfileUpdate": {
+        "type": "object",
+        "required": [
+          "nome",
+          "bio"
+        ],
+        "properties": {
+          "nome": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 100
+          },
+          "bio": {
+            "type": "string",
+            "maxLength": 280
+          }
+        }
+      }
+    }
+  }
+}

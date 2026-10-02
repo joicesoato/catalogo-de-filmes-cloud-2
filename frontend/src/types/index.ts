@@ -7,6 +7,16 @@ export interface User {
   role: Role;
 }
 
+export interface Profile {
+  id: number;
+  nome: string;
+  email?: string;
+  role: Role;
+  bio: string;
+  avatar_url: string | null;
+  criado_em: string;
+}
+
 export interface Movie {
   id: number;
   titulo: string;

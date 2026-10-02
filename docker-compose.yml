@@ -1,22 +1,44 @@
 services:
+
   app:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: catalogo-app
     environment:
-      PORT: 3000
-      DB_HOST: db
-      DB_PORT: 3306
+      PORT: ${PORT:-3000}
+      APP_URL: ${APP_URL}
+      AUTH_SERVICE_URL: ${AUTH_SERVICE_URL:-http://auth-service:3001}
+      LOG_SERVICE_URL: ${LOG_SERVICE_URL:-http://log-service:3002}
+
+      DB_HOST: ${DB_HOST:-db}
+      DB_PORT: ${DB_PORT:-3306}
+      DB_NAME: ${DB_NAME}
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
-      DB_NAME: ${DB_NAME}
+
+      JWT_SECRET: ${JWT_SECRET}
       SESSION_SECRET: ${SESSION_SECRET}
       INTERNAL_SERVICE_SECRET: ${INTERNAL_SERVICE_SECRET}
+
       TMDB_API_KEY: ${TMDB_API_KEY}
-      APP_URL: ${APP_URL:-http://localhost:3000}
-      AUTH_SERVICE_URL: http://auth-service:3001
-      LOG_SERVICE_URL: http://log-service:3002
       TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-1}
+
+      MAIL_HOST: ${MAIL_HOST}
+      MAIL_PORT: ${MAIL_PORT:-587}
+      MAIL_USER: ${MAIL_USER}
+      MAIL_PASSWORD: ${MAIL_PASSWORD}
+      MAIL_FROM: ${MAIL_FROM}
+
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-http://minio:9000}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_BUCKET: ${MINIO_BUCKET:-profile-photos}
+      MINIO_REGION: ${MINIO_REGION:-us-east-1}
+
     ports:
       - "3000:3000"
+
     depends_on:
       db:
         condition: service_healthy
@@ -24,89 +46,219 @@ services:
         condition: service_healthy
       log-service:
         condition: service_healthy
+      minio:
+        condition: service_healthy
+
+    networks:
+      - catalogo_net
+
     restart: unless-stopped
+
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+        ]
       interval: 15s
       timeout: 5s
-      start_period: 15s
+      start_period: 20s
       retries: 5
 
+
   auth-service:
-    build: ./auth-service
+    build:
+      context: ./auth-service
+      dockerfile: Dockerfile
+    container_name: catalogo-auth
     environment:
-      AUTH_PORT: 3001
-      DB_HOST: db
-      DB_PORT: 3306
+      AUTH_PORT: ${AUTH_PORT:-3001}
+      APP_URL: ${APP_URL}
+
+      DB_HOST: ${DB_HOST:-db}
+      DB_PORT: ${DB_PORT:-3306}
+      DB_NAME: ${DB_NAME}
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
-      DB_NAME: ${DB_NAME}
+
       JWT_SECRET: ${JWT_SECRET}
       INTERNAL_SERVICE_SECRET: ${INTERNAL_SERVICE_SECRET}
+
       MAIL_HOST: ${MAIL_HOST}
       MAIL_PORT: ${MAIL_PORT:-587}
       MAIL_USER: ${MAIL_USER}
       MAIL_PASSWORD: ${MAIL_PASSWORD}
       MAIL_FROM: ${MAIL_FROM}
-      APP_URL: ${APP_URL:-http://localhost:3000}
+
     depends_on:
       db:
         condition: service_healthy
+
+    networks:
+      - catalogo_net
+
     restart: unless-stopped
+
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+        ]
       interval: 15s
       timeout: 5s
-      start_period: 10s
+      start_period: 15s
       retries: 5
 
+
   log-service:
-    build: ./log-service
+    build:
+      context: ./log-service
+      dockerfile: Dockerfile
+    container_name: catalogo-log
     environment:
-      LOG_PORT: 3002
+      LOG_PORT: ${LOG_PORT:-3002}
       REDIS_URL: redis://redis:6379
       INTERNAL_SERVICE_SECRET: ${INTERNAL_SERVICE_SECRET}
+
     depends_on:
       redis:
         condition: service_healthy
+
+    networks:
+      - catalogo_net
+
     restart: unless-stopped
+
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3002/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3002/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+        ]
       interval: 15s
       timeout: 5s
       start_period: 10s
       retries: 5
 
+
+  db:
+    image: mariadb:11
+    container_name: catalogo-db
+    environment:
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-root}
+      MARIADB_DATABASE: ${DB_NAME}
+      MARIADB_USER: ${DB_USER}
+      MARIADB_PASSWORD: ${DB_PASSWORD}
+
+    ports:
+      - "3307:3306"
+
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+
+    networks:
+      - catalogo_net
+
+    restart: unless-stopped
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "healthcheck.sh",
+          "--connect",
+          "--innodb_initialized"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+
   redis:
     image: redis:7-alpine
-    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    container_name: catalogo-redis
+    command:
+      [
+        "redis-server",
+        "--appendonly",
+        "yes",
+        "--appendfsync",
+        "everysec"
+      ]
+
     volumes:
       - redis_data:/data
+
+    networks:
+      - catalogo_net
+
     restart: unless-stopped
+
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test:
+        [
+          "CMD",
+          "redis-cli",
+          "ping"
+        ]
       interval: 10s
       timeout: 3s
       retries: 5
 
-  db:
-    image: mariadb:11
+
+  minio:
+    image: soldevelo/minio:2026.7
+    container_name: catalogo-minio
+
+    command:
+      - server
+      - /data
+      - --console-address
+      - ":9001"
+
     environment:
-      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD}
-      MYSQL_DATABASE: ${DB_NAME}
-      MYSQL_USER: ${DB_USER}
-      MYSQL_PASSWORD: ${DB_PASSWORD}
-    volumes:
-      - mysql_data:/var/lib/mysql
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+
+    tmpfs:
+      - /data:uid=1001,gid=1001,mode=700
+
+    networks:
+      - catalogo_net
+
     restart: unless-stopped
+
     healthcheck:
-      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      test:
+        [
+          "CMD",
+          "curl",
+          "-f",
+          "http://127.0.0.1:9000/minio/health/live"
+        ]
       interval: 10s
       timeout: 5s
-      start_period: 20s
-      retries: 10
+      retries: 5
+
 
 volumes:
-  mysql_data:
+  db_data:
   redis_data:
+  # MinIO usa tmpfs no Codespace para evitar conflito de permissões.
+
+
+networks:
+  catalogo_net:
+    driver: bridge

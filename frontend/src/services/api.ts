@@ -16,11 +16,12 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData;
   const response = await fetch(path, {
     ...options,
     credentials: "same-origin",
     headers: {
-      ...(options.body ? { "Content-Type": "application/json" } : {}),
+      ...(options.body && !isFormData ? { "Content-Type": "application/json" } : {}),
       ...options.headers,
     },
   });
@@ -52,6 +53,7 @@ export const api = {
   get: <T>(path: string) => request<T>(path),
   post: <T>(path: string, body: unknown) => request<T>(path, json(body)),
   patch: <T>(path: string, body: unknown) => request<T>(path, { method: "PATCH", body: JSON.stringify(body) }),
+  postForm: <T>(path: string, form: FormData) => request<T>(path, { method: "POST", body: form }),
   delete: <T>(path: string) => request<T>(path, { method: "DELETE" }),
 };
 
@@ -86,4 +88,11 @@ export const endpoints = {
   reports: () => api.get<{ denuncias: Report[] }>("/api/admin/reports"),
   updateReport: (id: number, status: "ignorada" | "resolvida") => api.patch<ApiMessage>(`/api/admin/reports/${id}`, { status }),
   auditLogs: (limit = 50) => api.get<{ logs: import("../types").AuditLog[] }>(`/api/admin/logs?limit=${limit}`),
+  profile: (id: number) => api.get<{ perfil: import("../types").Profile; favoritos: Favorite[] }>(`/api/profile/${id}`),
+  updateProfile: (id: number, body: { nome: string; bio: string }) => api.patch<ApiMessage>(`/api/profile/${id}`, body),
+  uploadProfileAvatar: (id: number, file: File) => {
+    const form = new FormData();
+    form.append("foto", file);
+    return api.postForm<{ mensagem: string; avatar_url: string }>(`/api/profile/${id}/avatar`, form);
+  },
 };

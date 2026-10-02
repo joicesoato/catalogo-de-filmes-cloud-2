@@ -1,94 +1,181 @@
 services:
+
   app:
     image: joicesoato/catalogo-filmes-tom-hanks:${IMAGE_TAG:-latest}
+
     environment:
-      PORT: 3000
-      DB_HOST: ${DB_HOST}
-      DB_PORT: ${DB_PORT:-3306}
-      DB_USER: ${DB_USER}
-      DB_PASSWORD: ${DB_PASSWORD}
-      DB_NAME: ${DB_NAME}
-      TMDB_API_KEY: ${TMDB_API_KEY}
-      AUTH_SERVICE_URL: http://auth-service:3001
-      LOG_SERVICE_URL: http://log-service:3002
-      JWT_SECRET: ${JWT_SECRET}
-      SESSION_SECRET: ${SESSION_SECRET}
-      INTERNAL_SERVICE_SECRET: ${INTERNAL_SERVICE_SECRET}
-      APP_URL: ${APP_URL}
-      TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-1}
-      MAIL_HOST: ${MAIL_HOST}
-      MAIL_PORT: ${MAIL_PORT:-587}
-      MAIL_USER: ${MAIL_USER}
-      MAIL_PASSWORD: ${MAIL_PASSWORD}
-      MAIL_FROM: ${MAIL_FROM}
+      PORT: "3000"
+      APP_URL: "${APP_URL}"
+      AUTH_SERVICE_URL: "http://auth-service:3001"
+      LOG_SERVICE_URL: "http://log-service:3002"
+
+      DB_HOST: "${DB_HOST}"
+      DB_PORT: "${DB_PORT:-3306}"
+      DB_NAME: "${DB_NAME}"
+      DB_USER: "${DB_USER}"
+      DB_PASSWORD: "${DB_PASSWORD}"
+
+      JWT_SECRET: "${JWT_SECRET}"
+      SESSION_SECRET: "${SESSION_SECRET}"
+      INTERNAL_SERVICE_SECRET: "${INTERNAL_SERVICE_SECRET}"
+
+      TMDB_API_KEY: "${TMDB_API_KEY}"
+      TRUST_PROXY_HOPS: "${TRUST_PROXY_HOPS:-1}"
+
+      MAIL_HOST: "${MAIL_HOST}"
+      MAIL_PORT: "${MAIL_PORT:-587}"
+      MAIL_USER: "${MAIL_USER}"
+      MAIL_PASSWORD: "${MAIL_PASSWORD}"
+      MAIL_FROM: "${MAIL_FROM}"
+
+      MINIO_ENDPOINT: "${MINIO_ENDPOINT:-http://minio:9000}"
+      MINIO_ACCESS_KEY: "${MINIO_ACCESS_KEY}"
+      MINIO_SECRET_KEY: "${MINIO_SECRET_KEY}"
+      MINIO_BUCKET: "${MINIO_BUCKET:-profile-photos}"
+      MINIO_REGION: "${MINIO_REGION:-us-east-1}"
+
     ports:
       - "8211:3000"
+
     depends_on:
       auth-service:
         condition: service_healthy
       log-service:
         condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+
+    networks:
+      - catalogo_net
+
     restart: unless-stopped
+
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
       interval: 15s
       timeout: 5s
-      start_period: 15s
+      start_period: 20s
       retries: 5
 
   auth-service:
     image: joicesoato/catalogo-filmes-tom-hanks-auth:${IMAGE_TAG:-latest}
     environment:
-      AUTH_PORT: 3001
-      DB_HOST: ${DB_HOST}
-      DB_PORT: ${DB_PORT:-3306}
-      DB_USER: ${DB_USER}
-      DB_PASSWORD: ${DB_PASSWORD}
-      DB_NAME: ${DB_NAME}
-      JWT_SECRET: ${JWT_SECRET}
-      INTERNAL_SERVICE_SECRET: ${INTERNAL_SERVICE_SECRET}
-      APP_URL: ${APP_URL}
-      MAIL_HOST: ${MAIL_HOST}
-      MAIL_PORT: ${MAIL_PORT:-587}
-      MAIL_USER: ${MAIL_USER}
-      MAIL_PASSWORD: ${MAIL_PASSWORD}
-      MAIL_FROM: ${MAIL_FROM}
+      AUTH_PORT: "3001"
+      APP_URL: "${APP_URL}"
+      DB_HOST: "${DB_HOST}"
+      DB_PORT: "${DB_PORT:-3306}"
+      DB_NAME: "${DB_NAME}"
+      DB_USER: "${DB_USER}"
+      DB_PASSWORD: "${DB_PASSWORD}"
+      JWT_SECRET: "${JWT_SECRET}"
+      INTERNAL_SERVICE_SECRET: "${INTERNAL_SERVICE_SECRET}"
+      MAIL_HOST: "${MAIL_HOST}"
+      MAIL_PORT: "${MAIL_PORT:-587}"
+      MAIL_USER: "${MAIL_USER}"
+      MAIL_PASSWORD: "${MAIL_PASSWORD}"
+      MAIL_FROM: "${MAIL_FROM}"
+    networks:
+      - catalogo_net
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
       interval: 15s
       timeout: 5s
-      start_period: 10s
+      start_period: 15s
       retries: 5
 
   log-service:
     image: joicesoato/catalogo-filmes-tom-hanks-log:${IMAGE_TAG:-latest}
     environment:
-      LOG_PORT: 3002
-      REDIS_URL: redis://redis:6379
-      INTERNAL_SERVICE_SECRET: ${INTERNAL_SERVICE_SECRET}
+      LOG_PORT: "3002"
+      REDIS_URL: "redis://redis:6379"
+      INTERNAL_SERVICE_SECRET: "${INTERNAL_SERVICE_SECRET}"
     depends_on:
       redis:
         condition: service_healthy
+    networks:
+      - catalogo_net
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3002/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3002/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
       interval: 15s
       timeout: 5s
-      start_period: 10s
+      start_period: 15s
       retries: 5
 
   redis:
     image: redis:7-alpine
-    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
     volumes:
       - redis_data:/data
+    networks:
+      - catalogo_net
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test:
+        - CMD
+        - redis-cli
+        - ping
       interval: 10s
       timeout: 3s
       retries: 5
 
+  minio:
+    image: soldevelo/minio:2026.7
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: "${MINIO_ACCESS_KEY}"
+      MINIO_ROOT_PASSWORD: "${MINIO_SECRET_KEY}"
+    ports:
+      - "9000:9000"
+    volumes:
+      - minio_data:/data
+    networks:
+      - catalogo_net
+    restart: unless-stopped
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_started
+    entrypoint: /bin/sh
+    command: >-
+      -c "until mc alias set local http://minio:9000 $${MINIO_ACCESS_KEY} $${MINIO_SECRET_KEY} >/dev/null 2>&1 && mc ready local; do sleep 2; done;
+      mc mb --ignore-existing local/$${MINIO_BUCKET};
+      mc anonymous set download local/$${MINIO_BUCKET}"
+    environment:
+      MINIO_ACCESS_KEY: "${MINIO_ACCESS_KEY}"
+      MINIO_SECRET_KEY: "${MINIO_SECRET_KEY}"
+      MINIO_BUCKET: "${MINIO_BUCKET:-profile-photos}"
+    networks:
+      - catalogo_net
+    restart: "no"
+
 volumes:
   redis_data:
+  minio_data:
+
+networks:
+  catalogo_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.254.250.0/24

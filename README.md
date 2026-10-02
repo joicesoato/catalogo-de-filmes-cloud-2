@@ -1,176 +1,204 @@
 # Catálogo de Filmes — Tom Hanks
 
-Projeto acadêmico da disciplina **ISW055 — Cloud**, desenvolvido com Node.js, Express, React, TypeScript, MariaDB, Docker, Docker Compose e Redis.
+Projeto acadêmico desenvolvido para a disciplina **ISW055 — Introdução à Computação em Nuvem (Cloud)**.
 
-O sistema permite consultar filmes de Tom Hanks, criar conta, confirmar e-mail, fazer login, recuperar senha, favoritar filmes, comentar e denunciar comentários. A aplicação também possui **RBAC**, auditoria com **Redis Streams**, health checks, métricas e pipeline de **CI/CD com GitHub Actions**.
+O projeto evoluiu durante as atividades da disciplina de uma aplicação simples de catálogo para uma aplicação web completa, conteinerizada e distribuída, com autenticação, autorização por papéis, auditoria, Redis, armazenamento de arquivos com MinIO, perfil de usuário, documentação OpenAPI e pipeline de CI/CD.
 
-Professor: [Allan Siriani](https://github.com/siriani)
+**Professor:** [Allan Siriani](https://github.com/siriani)
+
+**Repositório:** https://github.com/joicesoato/catalogo-de-filmes-cloud-2
 
 ---
 
-## 1. Arquitetura
+# 1. Visão geral
+
+A aplicação permite consultar filmes de **Tom Hanks** e possui recursos de:
+
+- cadastro de usuários;
+- confirmação de e-mail;
+- login e logout;
+- recuperação e redefinição de senha;
+- catálogo de filmes;
+- detalhes dos filmes;
+- favoritos;
+- comentários;
+- denúncias de comentários;
+- moderação administrativa;
+- controle de acesso baseado em papéis (RBAC);
+- auditoria de ações;
+- perfil de usuário;
+- upload de foto de perfil;
+- armazenamento de imagens no MinIO;
+- Redis Streams;
+- health checks;
+- métricas;
+- documentação Swagger/OpenAPI;
+- CI/CD com GitHub Actions;
+- execução com Docker e Docker Compose;
+- implantação em Portainer.
+
+---
+
+# 2. Evolução do projeto
+
+## Atividade 1 — Aplicação e conteinerização
+
+A primeira etapa teve como objetivo disponibilizar a aplicação em um ambiente conteinerizado.
+
+Foram utilizados:
+
+- Node.js;
+- Express;
+- MariaDB;
+- Docker;
+- Docker Compose.
+
+A aplicação passou a ser executada dentro de container, permitindo maior padronização entre ambientes.
+
+---
+
+# 3. Atividade 2 — Catálogo de filmes
+
+Foi implementado o catálogo de filmes de Tom Hanks utilizando a API do **TMDB**.
+
+Principais recursos:
+
+- consulta de filmes;
+- exibição de título;
+- poster;
+- descrição;
+- informações do filme;
+- favoritos;
+- comentários;
+- persistência dos dados no MariaDB.
+
+A integração com o TMDB é realizada exclusivamente pelo backend.
+
+A chave da API não fica exposta no frontend.
+
+---
+
+# 4. Atividade 3 — Autenticação
+
+A aplicação passou a possuir um microserviço dedicado de autenticação.
+
+## Auth Service
+
+O `auth-service` é responsável por:
+
+- cadastro;
+- login;
+- confirmação de e-mail;
+- recuperação de senha;
+- redefinição de senha;
+- emissão e validação de JWT;
+- gerenciamento de permissões.
+
+O serviço utiliza a porta interna:
 
 ```text
-                           Navegador
-                               │
-                               ▼
-                    ┌─────────────────────┐
-                    │        app          │
-                    │ React + Express     │
-                    │       :3000         │
-                    └──────┬───────┬──────┘
-                           │       │
-              ┌────────────┘       └─────────────┐
-              ▼                                  ▼
-     ┌─────────────────┐                 ┌─────────────────┐
-     │  auth-service   │                 │   log-service   │
-     │      :3001      │                 │      :3002      │
-     │ rede interna    │                 │ rede interna    │
-     └────────┬────────┘                 └────────┬────────┘
-              │                                   │
-              ▼                                   ▼
-       ┌─────────────┐                      ┌─────────────┐
-       │   MariaDB   │                      │    Redis    │
-       │    :3306    │                      │    :6379    │
-       └─────────────┘                      └─────────────┘
+3001
 ```
 
-Somente o `app` publica porta para o host. `auth-service`, `log-service`, MariaDB e Redis permanecem na rede interna do Docker.
+A porta não é publicada diretamente para a internet na composição de produção.
 
-### Serviços
+## Senhas
 
-| Serviço | Responsabilidade | Porta pública |
-|---|---|---:|
-| `app` | Frontend React + API Express | `3000` |
-| `auth-service` | Autenticação, JWT, bcrypt, e-mail e permissões | nenhuma |
-| `log-service` | Auditoria e consulta de logs | nenhuma |
-| `db` | Persistência MariaDB | nenhuma |
-| `redis` | Redis Streams e persistência dos eventos | nenhuma |
+As senhas dos usuários não são armazenadas em texto puro.
 
----
+O sistema utiliza:
 
-## 2. Frontend React
+```text
+bcryptjs
+```
 
-O frontend foi migrado para **React + TypeScript + Vite**, mantendo a API e a autoridade de segurança no backend.
+com fator de custo 12.
 
-Principais páginas:
+## Recuperação de senha
 
-- Login;
-- Cadastro;
-- Recuperação de senha;
-- Redefinição de senha;
-- Catálogo;
-- Detalhes do filme;
-- Favoritos;
-- Moderação administrativa;
-- Visualização de eventos de auditoria.
+Os tokens de recuperação:
 
-A aplicação usa a sessão HTTP existente. O JWT continua somente entre o backend e o `auth-service`; ele não é armazenado no navegador.
-
-Durante o build Docker, o Vite gera `frontend/dist` e o Express serve essa versão em produção.
+- são gerados de forma aleatória;
+- são armazenados utilizando SHA-256;
+- possuem validade de 30 minutos;
+- são de uso único.
 
 ---
 
-## 3. Autenticação e segurança
+# 5. Atividade 4 — Autorização e RBAC
 
-### Senhas
+Foi implementado controle de acesso baseado em papéis.
 
-As senhas nunca são armazenadas em texto puro. O `auth-service` utiliza `bcryptjs` com fator de custo 12.
+Existem dois papéis:
 
-### JWT
+```text
+usuario
+admin
+```
 
-O JWT é emitido pelo `auth-service` e utilizado na comunicação interna entre o backend e o serviço de autenticação.
+A autorização é aplicada no **backend**.
 
-### Sessão
+A interface não é considerada uma barreira de segurança.
 
-O navegador recebe apenas o cookie de sessão `connect.sid`, configurado com:
+## Usuário comum
 
-- `HttpOnly`;
-- `SameSite=Lax`;
-- `Secure` em produção;
-- validade limitada.
+Pode:
 
-### Recuperação de senha
+- consultar o catálogo;
+- adicionar e remover os próprios favoritos;
+- criar comentários;
+- excluir os próprios comentários;
+- denunciar comentários;
+- editar o próprio perfil.
 
-Os tokens de recuperação são:
+## Administrador
 
-- aleatórios;
-- armazenados com SHA-256;
-- válidos por 30 minutos;
-- de uso único.
+Além das permissões do usuário comum, pode:
 
-### Proteções adicionais
-
-- Helmet;
-- Content Security Policy;
-- rate limiting;
-- consultas SQL parametrizadas;
-- validação de entradas;
-- limite de tamanho de body;
-- segredo interno entre serviços;
-- segredos fora do Git;
-- comunicação interna entre containers;
-- princípio de menor exposição de portas.
-
----
-
-## 4. RBAC — Atividade 4
-
-O sistema possui dois papéis:
-
-- `usuario`;
-- `admin`.
-
-A autorização é aplicada no **backend**. A interface não é considerada uma barreira de segurança.
-
-### `usuario`
-
-- consulta o catálogo;
-- gerencia os próprios favoritos;
-- cria comentários;
-- exclui somente os próprios comentários;
-- denuncia comentários de terceiros;
-- gerencia a própria conta.
-
-### `admin`
-
-Possui as permissões de usuário e também pode:
-
-- excluir comentários de qualquer usuário;
-- acessar a área de moderação;
+- excluir comentários de outros usuários;
 - consultar denúncias;
-- atualizar o status das denúncias;
-- consultar os logs de auditoria.
+- atualizar denúncias;
+- acessar recursos administrativos;
+- consultar os registros de auditoria.
 
-### Enforcement
+## Autorização centralizada
 
-Antes de operações administrativas, o `app` consulta o `auth-service` em `/authorize`.
+Antes de operações protegidas, o backend consulta o `auth-service`.
 
-O `auth-service` verifica o JWT, consulta o papel atual no banco e retorna as permissões correspondentes.
+O serviço verifica:
 
-Assim, uma alteração de papel no banco é considerada na próxima consulta de autorização, sem depender de uma permissão armazenada apenas na interface.
+1. identidade do usuário;
+2. sessão/JWT;
+3. papel atual;
+4. permissão necessária.
 
-### Demonstração recomendada
+Isso evita confiar somente em informações enviadas pelo frontend.
 
-1. Entrar como `usuario`.
-2. Criar um comentário.
-3. Excluir o próprio comentário: `200`.
-4. Tentar excluir comentário de outro usuário: `403`.
-5. Entrar como `admin`.
-6. Excluir o comentário de outro usuário: sucesso.
-7. Acessar `/api/admin/comments` como usuário comum: `403`.
-8. Acessar `/api/admin/logs` como usuário comum: `403`.
-9. Consultar `/api/admin/logs` como admin: `200`.
+## Exemplo de controle
+
+Uma tentativa de usuário comum acessar um endpoint administrativo resulta em:
+
+```text
+403 Forbidden
+```
+
+Da mesma forma, um usuário não pode excluir o comentário de outra pessoa.
 
 ---
 
-## 5. Auditoria com Redis — Atividade 5
+# 6. Atividade 5 — Auditoria e Redis
 
-Foi criado um serviço separado chamado `log-service`.
+Foi criado um serviço separado:
 
-O serviço não possui porta publicada para o host e se comunica somente pela rede interna Docker.
+```text
+log-service
+```
 
-### Redis Streams
+Ele é responsável pelo registro e consulta dos eventos de auditoria.
+
+A comunicação ocorre pela rede interna do Docker.
+
+## Redis Streams
 
 Os eventos são armazenados no stream:
 
@@ -178,139 +206,475 @@ Os eventos são armazenados no stream:
 audit:events
 ```
 
-O Redis utiliza AOF para persistência:
+O Redis utiliza persistência AOF:
 
 ```text
 --appendonly yes
 --appendfsync everysec
 ```
 
-Os eventos são limitados a aproximadamente 5.000 registros para evitar crescimento ilimitado.
+Os eventos são limitados para evitar crescimento ilimitado do stream.
 
-### Eventos registrados
+## Eventos registrados
 
-A aplicação registra, entre outros:
+Entre os eventos registrados estão:
 
-| Evento | Quando ocorre |
+| Evento | Descrição |
 |---|---|
-| `login` | login realizado com sucesso |
-| `logout` | logout realizado |
-| `favorite_add` | filme adicionado aos favoritos |
-| `favorite_remove` | filme removido dos favoritos |
-| `comment_create` | comentário criado |
-| `comment_delete` | comentário excluído |
-| `access_denied_403` | tentativa autenticada sem permissão |
+| `login` | Login realizado |
+| `logout` | Logout realizado |
+| `favorite_add` | Filme adicionado aos favoritos |
+| `favorite_remove` | Filme removido dos favoritos |
+| `comment_create` | Comentário criado |
+| `comment_delete` | Comentário excluído |
+| `access_denied_403` | Tentativa de acesso sem permissão |
+| `profile_update` | Perfil atualizado |
+| `profile_avatar_upload` | Foto enviada ao MinIO |
 
-Cada evento possui, no mínimo:
+Cada evento possui informações como:
 
-- `usuario_id`;
-- `acao`;
-- `timestamp`.
+- usuário;
+- ação;
+- data/hora;
+- detalhes da operação.
 
-Também podem ser registrados IP e detalhes da operação.
+Quando disponível, também podem ser registrados dados como IP.
 
-### Endpoint administrativo
+## Consulta administrativa
+
+Os administradores podem consultar:
 
 ```text
 GET /api/admin/logs?limit=50
 ```
 
-A rota é protegida por:
-
-```text
-admin:moderate
-```
-
-Usuário comum recebe `403 Forbidden`.
-
-O frontend administrativo exibe os eventos recentes em uma área de auditoria.
+Usuários comuns não possuem permissão para acessar esse endpoint.
 
 ---
 
-## 6. Health checks e métricas — Extra 2
+# 7. Atividade 6 — Upload e perfil
 
-### `/health`
+A sexta atividade transforma o catálogo em uma aplicação com características de rede social.
 
-O endpoint do `app` verifica:
+## Perfil
 
-- MariaDB;
-- `auth-service`;
-- `log-service`.
+Cada usuário possui uma página de perfil com:
 
-Se todas as dependências estiverem disponíveis:
+- nome;
+- foto;
+- bio;
+- e-mail;
+- papel;
+- filmes favoritos.
+
+A página utiliza a rota:
 
 ```text
-HTTP 200
+/profile/:id
 ```
 
-Se uma dependência estiver indisponível:
+## Edição do perfil
+
+A atualização utiliza:
 
 ```text
-HTTP 503
+PATCH /api/profile/:id
 ```
 
-Exemplo:
+A identidade utilizada pelo backend vem da sessão autenticada.
+
+O backend **não confia em um `usuario_id` enviado pelo frontend para determinar quem está sendo editado**.
+
+A tentativa de editar o perfil de outro usuário resulta em:
+
+```text
+403 Forbidden
+```
+
+Essa tentativa também pode gerar o evento:
+
+```text
+access_denied_403
+```
+
+---
+
+# 8. Upload da foto de perfil
+
+O upload é realizado através de:
+
+```text
+POST /api/profile/:id/avatar
+```
+
+Formato:
+
+```text
+multipart/form-data
+```
+
+Campo:
+
+```text
+foto
+```
+
+## Validações
+
+O backend valida:
+
+- tipo de arquivo;
+- MIME type;
+- assinatura/magic bytes;
+- tamanho máximo.
+
+São aceitos:
+
+```text
+JPEG
+PNG
+WEBP
+GIF
+```
+
+O tamanho máximo é:
+
+```text
+5 MB
+```
+
+Arquivos que não atendem às validações são rejeitados antes do armazenamento.
+
+---
+
+# 9. MinIO
+
+O armazenamento das fotos utiliza **MinIO**, compatível com a API S3.
+
+O bucket utilizado é:
+
+```text
+profile-photos
+```
+
+As imagens são armazenadas com chaves semelhantes a:
+
+```text
+profiles/<usuario_id>/<uuid>.jpg
+```
+
+O arquivo binário não é armazenado no MariaDB.
+
+No banco é armazenada somente a referência:
+
+```text
+avatar_object_key
+```
+
+Isso mantém o banco responsável pelos dados da aplicação e o armazenamento de objetos responsável pelos arquivos.
+
+## Exibição da foto
+
+A aplicação utiliza uma rota própria para entregar a imagem:
+
+```text
+GET /api/profile/:id/avatar
+```
+
+O backend localiza o `avatar_object_key` no MariaDB, recupera o objeto no MinIO e devolve a imagem ao navegador.
+
+Dessa forma, o navegador não precisa conhecer as credenciais do MinIO.
+
+Essa estratégia também permite manter o MinIO dentro da rede Docker e reduzir sua exposição externa.
+
+---
+
+# 10. Banco de dados
+
+As principais tabelas utilizadas são:
+
+```text
+usuarios
+favoritos
+comentarios
+reset_tokens
+comentario_denuncias
+```
+
+Para a Atividade 6 foram adicionados à tabela `usuarios`:
+
+```text
+bio
+avatar_object_key
+```
+
+A migration correspondente está em:
+
+```text
+database/migration-v5.sql
+```
+
+A migration foi criada para preservar os dados existentes.
+
+Ela não remove usuários ou favoritos.
+
+---
+
+# 11. Arquitetura
+
+```text
+                         NAVEGADOR
+                             │
+                             ▼
+                    ┌─────────────────┐
+                    │      APP        │
+                    │ React + Express │
+                    │      :3000      │
+                    └───────┬─────────┘
+                            │
+          ┌─────────────────┼──────────────────┐
+          │                 │                  │
+          ▼                 ▼                  ▼
+ ┌────────────────┐ ┌────────────────┐ ┌────────────────┐
+ │  auth-service  │ │  log-service   │ │     MinIO      │
+ │     :3001      │ │     :3002      │ │ armazenamento  │
+ └───────┬────────┘ └───────┬────────┘ └────────────────┘
+         │                  │
+         ▼                  ▼
+ ┌───────────────┐    ┌───────────────┐
+ │    MariaDB    │    │     Redis     │
+ │      :3306    │    │     :6379     │
+ └───────────────┘    └───────────────┘
+```
+
+Os serviços internos não precisam ter suas portas publicadas para o host.
+
+---
+
+# 12. Serviços
+
+| Serviço | Função |
+|---|---|
+| `app` | Frontend React + API Express |
+| `auth-service` | Autenticação e autorização |
+| `log-service` | Auditoria |
+| `minio` | Armazenamento de fotos |
+| `db` | MariaDB |
+| `redis` | Redis Streams e persistência |
+
+---
+
+# 13. Frontend
+
+O frontend utiliza:
+
+- React;
+- TypeScript;
+- Vite.
+
+Principais telas:
+
+- Login;
+- Cadastro;
+- Confirmação de e-mail;
+- Recuperação de senha;
+- Redefinição de senha;
+- Catálogo;
+- Detalhes do filme;
+- Favoritos;
+- Perfil;
+- Moderação;
+- Auditoria administrativa.
+
+Durante o build Docker, o Vite gera:
+
+```text
+frontend/dist
+```
+
+Essa versão é servida pelo Express em produção.
+
+---
+
+# 14. Segurança
+
+Foram aplicadas diversas medidas de segurança.
+
+## Proteções HTTP
+
+Utilização de:
+
+```text
+Helmet
+```
+
+com políticas de segurança, incluindo Content Security Policy.
+
+## Rate limiting
+
+Existem limites de requisições para reduzir abuso de endpoints sensíveis.
+
+## SQL
+
+As consultas ao banco utilizam parâmetros, evitando concatenação direta de valores fornecidos pelo usuário.
+
+## Sessão
+
+O navegador utiliza cookie de sessão com configurações como:
+
+```text
+HttpOnly
+SameSite=Lax
+Secure em produção
+```
+
+O JWT não é armazenado diretamente no navegador.
+
+## Segredos
+
+Informações sensíveis ficam em variáveis de ambiente.
+
+Não devem ser armazenados no Git:
+
+- senhas;
+- tokens;
+- JWT secrets;
+- credenciais SMTP;
+- chave do TMDB;
+- credenciais do MinIO.
+
+---
+
+# 15. Health Checks
+
+A aplicação possui endpoint:
+
+```text
+GET /health
+```
+
+Ele verifica as dependências principais da aplicação.
+
+Também existem health checks configurados nos containers.
+
+Exemplo de resposta saudável:
 
 ```json
 {
   "status": "ok",
-  "servico": "catalogo",
-  "dependencias": {
-    "database": "ok",
-    "auth_service": "ok",
-    "log_service": "ok"
-  }
+  "servico": "catalogo"
 }
 ```
 
-Também existem health checks nos containers `app`, `auth-service`, `log-service`, `redis` e `db`.
+Os health checks permitem que o Docker/Portainer identifique containers que não estão funcionando corretamente.
 
-### `/metrics`
+---
 
-A aplicação expõe métricas em formato compatível com Prometheus, incluindo:
+# 16. Métricas
 
-- quantidade de requisições;
-- método HTTP;
-- rota;
-- status HTTP;
-- soma das durações das requisições.
-
-Exemplo:
+A aplicação possui:
 
 ```text
 GET /metrics
 ```
 
+As métricas incluem informações relacionadas às requisições HTTP, como:
+
+- método;
+- rota;
+- status;
+- quantidade de requisições;
+- duração das requisições.
+
+O formato é compatível com ferramentas de monitoramento como Prometheus.
+
 ---
 
-## 7. CI/CD — Extra 1
+# 17. Swagger / OpenAPI — Atividade Extra
 
-O workflow está em:
+A documentação da API foi adicionada para facilitar a compreensão e os testes dos serviços.
+
+## Aplicação principal
+
+Swagger UI:
+
+```text
+/api/docs
+```
+
+OpenAPI:
+
+```text
+/api/openapi.json
+```
+
+Arquivo:
+
+```text
+docs/openapi-app.json
+```
+
+## Auth Service
+
+Swagger UI:
+
+```text
+/docs
+```
+
+OpenAPI:
+
+```text
+/openapi.json
+```
+
+Arquivo:
+
+```text
+auth-service/openapi.json
+```
+
+A documentação contém endpoints, parâmetros, corpos de requisição e respostas HTTP.
+
+Também é possível utilizar:
+
+```text
+Try it out
+```
+
+para realizar testes diretamente pelo Swagger UI.
+
+O `auth-service` permanece sem porta pública na composição de produção.
+
+---
+
+# 18. CI/CD — Atividade Extra
+
+O projeto possui pipeline de CI/CD utilizando:
+
+```text
+GitHub Actions
+```
+
+Workflow:
 
 ```text
 .github/workflows/ci-cd.yml
 ```
 
-A cada push na `main`:
+A pipeline executa etapas como:
 
-1. instala e valida o frontend;
-2. gera o build React;
-3. constrói os containers;
-4. sobe o ambiente completo;
-5. verifica o `/health` real;
-6. verifica `/metrics`;
-7. verifica o `auth-service`;
-8. verifica o `log-service`;
-9. publica as imagens no Docker Hub.
+1. instalação das dependências;
+2. validação do frontend;
+3. build do React;
+4. construção das imagens Docker;
+5. inicialização do ambiente de testes;
+6. verificação dos serviços;
+7. verificação de health;
+8. verificação de métricas;
+9. publicação das imagens no Docker Hub.
 
-As imagens recebem duas tags:
-
-```text
-<imagem>:<SHA-do-commit>
-<imagem>:latest
-```
-
-Imagens:
+As imagens publicadas são:
 
 ```text
 joicesoato/catalogo-filmes-tom-hanks
@@ -318,35 +682,50 @@ joicesoato/catalogo-filmes-tom-hanks-auth
 joicesoato/catalogo-filmes-tom-hanks-log
 ```
 
-### Secrets do GitHub
-
-Configurar em **Settings → Secrets and variables → Actions**:
+As imagens podem utilizar as tags:
 
 ```text
-DOCKERHUB_USERNAME
-DOCKERHUB_TOKEN
-PORTAINER_WEBHOOK   (opcional)
+latest
+<sha-do-commit>
 ```
-
-Nenhuma senha de banco, JWT, TMDB ou SMTP deve ser colocada no workflow.
-
-### Deploy automático
-
-Se o `PORTAINER_WEBHOOK` estiver configurado, o workflow chama o webhook após a publicação das imagens.
 
 ---
 
-## 8. Execução local
+# 19. Docker
 
-Crie `.env` a partir de `.env.example` e preencha os valores reais.
+O projeto possui Dockerfiles separados para os principais serviços.
 
-Depois:
+A aplicação principal utiliza uma construção em múltiplas etapas:
+
+```text
+Frontend build
+      ↓
+frontend/dist
+      ↓
+Imagem Node.js
+      ↓
+Express servindo a aplicação
+```
+
+Isso evita a necessidade de executar o servidor de desenvolvimento do Vite em produção.
+
+---
+
+# 20. Docker Compose
+
+Arquivo principal:
+
+```text
+docker-compose.yml
+```
+
+Ele permite executar o ambiente local com:
 
 ```bash
 docker compose up -d --build
 ```
 
-Verifique:
+Para verificar:
 
 ```bash
 docker compose ps
@@ -364,7 +743,7 @@ Métricas:
 curl http://localhost:3000/metrics
 ```
 
-A aplicação fica em:
+Aplicação:
 
 ```text
 http://localhost:3000
@@ -372,104 +751,261 @@ http://localhost:3000
 
 ---
 
-## 9. Testes da auditoria
+# 21. Portainer
 
-Depois de fazer login, favoritar, comentar e realizar uma tentativa negada de autorização, um administrador pode consultar:
-
-```bash
-curl -H "Cookie: connect.sid=SESSAO_DO_ADMIN" \
-  http://localhost:3000/api/admin/logs?limit=20
-```
-
-Ou utilizar a área de auditoria do painel administrativo.
-
-Para testar diretamente o Redis dentro do container:
-
-```bash
-docker compose exec redis redis-cli XREVRANGE audit:events + - COUNT 10
-```
-
----
-
-## 10. Portainer
-
-Para publicação utilizando a infraestrutura externa existente, foi incluído:
+Para implantação no ambiente disponibilizado pela disciplina foi criado:
 
 ```text
 docker-compose.portainer.yml
 ```
 
-Essa composição **não cria outro MariaDB**. Ela utiliza o banco externo já existente e adiciona o Redis persistente para a auditoria.
+A composição utiliza o banco externo existente e não cria outro banco MariaDB para produção.
 
-A aplicação continua publicada em:
+A aplicação é publicada na porta:
+
+```text
+8211
+```
+
+Mapeamento:
 
 ```text
 8211:3000
 ```
 
-O `auth-service`, `log-service`, Redis e banco continuam sem portas públicas.
+Os serviços internos permanecem protegidos pela rede Docker.
 
-O valor de `IMAGE_TAG` pode ser configurado com o SHA do commit para demonstrar exatamente qual versão está em execução.
+A rede utiliza a sub-rede:
 
----
+```text
+10.254.250.0/24
+```
 
-## 11. Banco de dados
+Isso evita depender exclusivamente dos pools automáticos de redes Docker do servidor.
 
-As tabelas principais são:
+O MinIO possui armazenamento persistente por volume:
 
-- `usuarios`;
-- `favoritos`;
-- `comentarios`;
-- `reset_tokens`;
-- `comentario_denuncias`.
-
-`init.sql` é utilizado na criação de um banco novo. Em uma instalação existente, devem ser aplicadas as migrations correspondentes sem destruir o volume.
-
-**Não utilizar `docker compose down -v` em um ambiente com dados que precisam ser preservados.**
+```text
+minio_data
+```
 
 ---
 
-## 12. Estrutura principal
+# 22. Variáveis de ambiente
+
+As variáveis necessárias estão documentadas em:
+
+```text
+.env.example
+```
+
+Principais variáveis:
+
+```text
+DB_HOST
+DB_PORT
+DB_NAME
+DB_USER
+DB_PASSWORD
+
+JWT_SECRET
+SESSION_SECRET
+INTERNAL_SERVICE_SECRET
+
+TMDB_API_KEY
+
+MAIL_HOST
+MAIL_PORT
+MAIL_USER
+MAIL_PASSWORD
+MAIL_FROM
+
+MINIO_ENDPOINT
+MINIO_ACCESS_KEY
+MINIO_SECRET_KEY
+MINIO_BUCKET
+MINIO_REGION
+```
+
+Os valores reais não devem ser commitados.
+
+---
+
+# 23. Estrutura do projeto
 
 ```text
 catalogo-de-filmes-cloud-2/
-├── .github/workflows/ci-cd.yml
+│
+├── .github/
+│   └── workflows/
+│       └── ci-cd.yml
+│
 ├── auth-service/
+│   ├── index.js
+│   ├── openapi.json
+│   ├── Dockerfile
+│   └── package.json
+│
 ├── database/
+│   ├── schema.sql
+│   └── migration-v5.sql
+│
+├── docs/
+│   └── openapi-app.json
+│
 ├── frontend/
 │   └── src/
+│
 ├── log-service/
+│
 ├── middleware/
-├── public/
+│
 ├── services/
+│   ├── audit.js
+│   ├── minio.js
+│   └── tmdb.js
+│
 ├── Dockerfile
 ├── docker-compose.yml
 ├── docker-compose.portainer.yml
 ├── init.sql
 ├── server.js
+├── package.json
+├── .env.example
 └── README.md
 ```
 
-O diretório `public/` antigo foi preservado como referência/compatibilidade, enquanto a aplicação de produção utiliza o build React em `frontend/dist`.
+---
+
+# 24. Evidências recomendadas para a entrega
+
+Para demonstrar a implementação das atividades, podem ser apresentados:
+
+## Atividades iniciais
+
+- aplicação funcionando;
+- containers em execução;
+- catálogo de filmes;
+- consulta ao TMDB.
+
+## Autenticação
+
+- cadastro;
+- login;
+- confirmação de e-mail;
+- recuperação de senha.
+
+## RBAC
+
+- usuário comum recebendo `403` em ação administrativa;
+- administrador acessando recurso administrativo;
+- usuário tentando excluir comentário de outra pessoa.
+
+## Auditoria
+
+- eventos registrados no Redis;
+- painel de auditoria;
+- consulta de logs como administrador.
+
+## Atividade 6
+
+- página de perfil;
+- foto carregada;
+- bio;
+- favoritos;
+- upload de imagem;
+- tentativa de editar outro perfil retornando `403`.
+
+## Infraestrutura
+
+- Docker;
+- Docker Compose;
+- Portainer;
+- containers saudáveis;
+- MinIO com bucket `profile-photos`.
+
+## Extras
+
+- GitHub Actions executado com sucesso;
+- imagens publicadas no Docker Hub;
+- Swagger UI da aplicação;
+- Swagger UI do auth-service;
+- `/health`;
+- `/metrics`.
 
 ---
 
-## 13. Entrega e evidências
+# 25. Segurança durante a entrega
 
-Para a apresentação/entrega, recomenda-se anexar prints de:
+Antes da publicação final, verificar se nenhum arquivo contém credenciais reais.
 
-1. GitHub Actions com workflow verde;
-2. containers `app`, `auth-service`, `log-service`, `redis` e `db` saudáveis;
-3. `/health` retornando `200`;
-4. `/health` retornando `503` durante uma simulação controlada de dependência indisponível, se solicitado;
-5. `/metrics` com contadores;
-6. usuário comum recebendo `403` em ação administrativa;
-7. administrador acessando a moderação;
-8. painel de auditoria mostrando eventos;
-9. Portainer mostrando as imagens/versões implantadas.
+Não devem ser enviados ao GitHub:
+
+```text
+.env
+```
+
+ou arquivos contendo:
+
+```text
+DB_PASSWORD
+JWT_SECRET
+SESSION_SECRET
+INTERNAL_SERVICE_SECRET
+TMDB_API_KEY
+MAIL_PASSWORD
+MINIO_SECRET_KEY
+```
+
+O arquivo disponibilizado no repositório é:
+
+```text
+.env.example
+```
+
+com valores de exemplo.
 
 ---
 
-## Observação de segurança
+# 26. Conclusão
 
-Arquivos `.env`, tokens, senhas, chaves JWT, credenciais SMTP e chaves da TMDB não devem ser commitados. Caso uma credencial real tenha sido exposta durante testes, ela deve ser rotacionada antes da entrega final.
+O projeto evoluiu de um catálogo de filmes para uma aplicação web distribuída, com separação de responsabilidades entre serviços.
+
+A solução utiliza:
+
+```text
+React
+TypeScript
+Vite
+Node.js
+Express
+MariaDB
+Redis
+Redis Streams
+MinIO
+Docker
+Docker Compose
+Portainer
+GitHub Actions
+Swagger/OpenAPI
+TMDB
+```
+
+As atividades implementadas abrangem:
+
+- aplicação conteinerizada;
+- catálogo de filmes;
+- autenticação;
+- recuperação de senha;
+- autorização RBAC;
+- auditoria;
+- Redis Streams;
+- health checks;
+- métricas;
+- upload de arquivos;
+- perfil de usuário;
+- armazenamento de objetos;
+- CI/CD;
+- documentação de API.
+
+O projeto foi estruturado buscando manter os serviços separados, reduzir a exposição de portas, proteger credenciais e centralizar as regras de autenticação e autorização no backend.

@@ -50,7 +50,7 @@ export default function Catalog() {
   movies[0];
 
   return (
-    <div className="cnano frontend/src/pages/Catalog.tsxatalog-page">
+    <div className="catalog-page">
       {featured && <section className="catalog-feature">
         {featured.poster && <img className="feature-backdrop" src={featured.poster} alt="" />}
         <div className="feature-scrim" />

@@ -1,6 +1,7 @@
 require("dotenv").config();
 
 const path = require("path");
+const crypto = require("crypto");
 const express = require("express");
 const session = require("express-session");
 const mysql = require("mysql2/promise");
@@ -13,6 +14,7 @@ const {
 } = require("./middleware/auth");
 const { buscarTomHanks } = require("./services/tmdb");
 const { registrarAuditoria } = require("./services/audit");
+const { uploadObject, deleteObject, getObject, checkMinio } = require("./services/minio");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -80,8 +82,79 @@ const authLimiter = rateLimit({
 
 const AUTH_SERVICE_URL = process.env.AUTH_SERVICE_URL || "http://auth-service:3001";
 const LOG_SERVICE_URL = process.env.LOG_SERVICE_URL || "http://log-service:3002";
+const MAX_PROFILE_IMAGE_BYTES = 5 * 1024 * 1024;
+const ALLOWED_PROFILE_IMAGES = new Map([
+  ["image/jpeg", "jpg"],
+  ["image/png", "png"],
+  ["image/webp", "webp"],
+  ["image/gif", "gif"]
+]);
+
+function validarImagemPerfil(buffer, mimeType) {
+  if (!ALLOWED_PROFILE_IMAGES.has(mimeType)) return false;
+  if (!buffer || buffer.length === 0 || buffer.length > MAX_PROFILE_IMAGE_BYTES) return false;
+  if (mimeType === "image/jpeg") return buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+  if (mimeType === "image/png") return buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+  if (mimeType === "image/gif") return buffer.subarray(0, 6).toString("ascii") === "GIF87a" || buffer.subarray(0, 6).toString("ascii") === "GIF89a";
+  return buffer.subarray(0, 4).toString("ascii") === "RIFF" && buffer.subarray(8, 12).toString("ascii") === "WEBP";
+}
+
+function extrairMultipart(buffer, contentType) {
+  if (!Buffer.isBuffer(buffer)) return null;
+  const match = contentType.match(/boundary=(?:"([^"]+)"|([^;]+))/i);
+  if (!match) return null;
+  const boundary = Buffer.from(`--${match[1] || match[2]}`);
+  const partes = [];
+  let inicio = 0;
+  while (true) {
+    const indice = buffer.indexOf(boundary, inicio);
+    if (indice === -1) break;
+    if (inicio !== 0) {
+      let parte = buffer.subarray(inicio, indice);
+      if (parte.subarray(0, 2).equals(Buffer.from("\r\n"))) parte = parte.subarray(2);
+      if (parte.length && !parte.equals(Buffer.from("--\r\n"))) partes.push(parte);
+    }
+    inicio = indice + boundary.length;
+  }
+
+  for (const parte of partes) {
+    const separador = parte.indexOf(Buffer.from("\r\n\r\n"));
+    if (separador === -1) continue;
+    const cabecalhos = parte.subarray(0, separador).toString("utf8");
+    let conteudo = parte.subarray(separador + 4);
+    if (conteudo.subarray(-2).equals(Buffer.from("\r\n"))) conteudo = conteudo.subarray(0, -2);
+    const disposition = cabecalhos.match(/content-disposition:\s*form-data;[^\r\n]*name="([^"]+)"(?:;\s*filename="([^"]*)")?/i);
+    if (!disposition) continue;
+    const mime = cabecalhos.match(/content-type:\s*([^\r\n]+)/i)?.[1]?.trim().toLowerCase() || "";
+    return { name: disposition[1], filename: disposition[2] || "", mimeType: mime, buffer: conteudo };
+  }
+  return null;
+}
+
+function validarIdUsuario(req, res) {
+  if (!/^\d+$/.test(req.params.id)) {
+    res.status(400).json({ erro: "ID de usuário inválido." });
+    return null;
+  }
+  const alvo = Number(req.params.id);
+  const logado = Number(req.session.usuario.id);
+  if (alvo !== logado) {
+    void registrarAuditoria(req, "access_denied_403", { permissao: "profile:manage:own", usuario_alvo: alvo });
+    res.status(403).json({ erro: "Você só pode editar o próprio perfil." });
+    return null;
+  }
+  return alvo;
+}
 
 const metricas = new Map();
+
+function enviarSwaggerUi(res, specUrl) {
+  res.removeHeader("Content-Security-Policy");
+  res.type("html").send(`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Swagger UI</title><link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css"></head><body><div id="swagger-ui"></div><script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script><script>window.onload=()=>SwaggerUIBundle({url:"${specUrl}",dom_id:"#swagger-ui",deepLinking:true,presets:[SwaggerUIBundle.presets.apis,SwaggerUIBundle.SwaggerUIStandalonePreset],layout:"BaseLayout"});</script></body></html>`);
+}
+
+app.get("/api/openapi.json", (req, res) => res.sendFile(path.join(__dirname, "docs", "openapi-app.json")));
+app.get("/api/docs", (req, res) => enviarSwaggerUi(res, "/api/openapi.json"));
 
 app.use((req, res, next) => {
   const inicio = process.hrtime.bigint();
@@ -227,6 +300,149 @@ app.get("/api/movies", exigirLogin, async (req, res) => {
   } catch (erro) {
     console.error("Erro TMDB:", erro.message);
     res.status(500).json({ erro: "Não foi possível carregar os filmes da TMDB." });
+  }
+});
+
+app.get("/api/profile/:id/avatar", exigirLogin, async (req, res) => {
+  try {
+    if (!/^\d+$/.test(req.params.id)) {
+      return res.status(400).json({ erro: "ID de usuário inválido." });
+    }
+
+    const usuarioId = Number(req.params.id);
+
+    const [usuarios] = await pool.execute(
+      "SELECT avatar_object_key FROM usuarios WHERE id = ?",
+      [usuarioId]
+    );
+
+    if (!usuarios.length || !usuarios[0].avatar_object_key) {
+      return res.status(404).json({ erro: "Foto de perfil não encontrada." });
+    }
+
+    const resposta = await getObject(usuarios[0].avatar_object_key);
+
+    res.setHeader(
+      "Content-Type",
+      resposta.headers.get("content-type") || "application/octet-stream"
+    );
+
+    const buffer = Buffer.from(await resposta.arrayBuffer());
+    res.send(buffer);
+  } catch (erro) {
+    console.error("Erro ao carregar avatar:", erro.message);
+    res.status(500).json({ erro: "Não foi possível carregar a foto de perfil." });
+  }
+});
+
+app.get("/api/profile/:id", exigirLogin, async (req, res) => {
+  try {
+    if (!/^\d+$/.test(req.params.id)) return res.status(400).json({ erro: "ID de usuário inválido." });
+    const usuarioId = Number(req.params.id);
+    const [usuarios] = await pool.execute(
+      `SELECT id, nome, email, role, bio, avatar_object_key, criado_em
+       FROM usuarios WHERE id = ?`,
+      [usuarioId]
+    );
+    if (!usuarios.length) return res.status(404).json({ erro: "Perfil não encontrado." });
+
+    const [favoritos] = await pool.execute(
+      `SELECT id, tmdb_movie_id, titulo, poster_path, criado_em
+       FROM favoritos WHERE usuario_id = ? ORDER BY criado_em DESC`,
+      [usuarioId]
+    );
+    const usuario = usuarios[0];
+    const dono = Number(usuario.id) === Number(req.session.usuario.id);
+    res.json({
+      perfil: {
+        id: usuario.id,
+        nome: usuario.nome,
+        ...(dono ? { email: usuario.email } : {}),
+        role: usuario.role,
+        bio: usuario.bio || "",
+        avatar_url: usuario.avatar_object_key
+          ? `/api/profile/${usuario.id}/avatar`
+          : null,
+        criado_em: usuario.criado_em
+      },
+      favoritos
+    });
+  } catch (erro) {
+    console.error("Erro ao buscar perfil:", erro.message);
+    res.status(500).json({ erro: "Não foi possível carregar o perfil." });
+  }
+});
+
+app.patch("/api/profile/:id", exigirLogin, async (req, res) => {
+  try {
+    const usuarioId = validarIdUsuario(req, res);
+    if (!usuarioId) return;
+
+    const nome = typeof req.body.nome === "string" ? req.body.nome.trim() : "";
+    const bio = typeof req.body.bio === "string" ? req.body.bio.trim() : "";
+    if (nome.length < 2 || nome.length > 100) {
+      return res.status(400).json({ erro: "O nome deve ter entre 2 e 100 caracteres." });
+    }
+    if (bio.length > 280) {
+      return res.status(400).json({ erro: "A bio pode ter no máximo 280 caracteres." });
+    }
+
+    await pool.execute(
+      `UPDATE usuarios SET nome = ?, bio = ? WHERE id = ?`,
+      [nome, bio || null, usuarioId]
+    );
+    req.session.usuario.nome = nome;
+    void registrarAuditoria(req, "profile_update", { usuario_id: usuarioId });
+    res.json({ mensagem: "Perfil atualizado com sucesso." });
+  } catch (erro) {
+    console.error("Erro ao atualizar perfil:", erro.message);
+    res.status(500).json({ erro: "Não foi possível atualizar o perfil." });
+  }
+});
+
+app.post("/api/profile/:id/avatar", exigirLogin, express.raw({ type: "multipart/form-data", limit: "5.5mb" }), async (req, res) => {
+  try {
+    const usuarioId = validarIdUsuario(req, res);
+    if (!usuarioId) return;
+
+    const arquivo = extrairMultipart(req.body, req.get("content-type") || "");
+    if (!arquivo || arquivo.name !== "foto" || !arquivo.filename) {
+      return res.status(400).json({ erro: "Envie uma imagem no campo foto." });
+    }
+    if (!validarImagemPerfil(arquivo.buffer, arquivo.mimeType)) {
+      return res.status(400).json({ erro: "Apenas imagens JPEG, PNG, WEBP ou GIF de até 5 MB são aceitas." });
+    }
+
+    const extensao = ALLOWED_PROFILE_IMAGES.get(arquivo.mimeType);
+    const objectKey = `profiles/${usuarioId}/${crypto.randomUUID()}.${extensao}`;
+    const [usuarios] = await pool.execute(
+      "SELECT avatar_object_key FROM usuarios WHERE id = ?",
+      [usuarioId]
+    );
+    const avatarAnterior = usuarios[0]?.avatar_object_key || null;
+
+    await uploadObject(objectKey, arquivo.buffer, arquivo.mimeType);
+    try {
+      await pool.execute(
+        "UPDATE usuarios SET avatar_object_key = ? WHERE id = ?",
+        [objectKey, usuarioId]
+      );
+    } catch (erroBanco) {
+      await deleteObject(objectKey).catch(() => {});
+      throw erroBanco;
+    }
+
+    if (avatarAnterior && avatarAnterior !== objectKey) {
+      await deleteObject(avatarAnterior).catch((erro) => console.error("Erro ao remover avatar anterior:", erro.message));
+    }
+
+    res.status(201).json({
+      mensagem: "Foto de perfil atualizada.",
+      avatar_url: `/api/profile/${usuarioId}/avatar`
+    });
+      } catch (erro) {
+        console.error("Erro no upload do perfil:", erro.message);
+        res.status(500).json({ erro: "Não foi possível salvar a foto de perfil." });
   }
 });
 
@@ -575,6 +791,14 @@ app.get("/health", async (req, res) => {
       dependencias[nome] = "indisponivel";
       pronto = false;
     }
+  }
+
+  try {
+    dependencias.minio = (await checkMinio()) ? "ok" : "indisponivel";
+    if (dependencias.minio !== "ok") pronto = false;
+  } catch {
+    dependencias.minio = "indisponivel";
+    pronto = false;
   }
 
   res.status(pronto ? 200 : 503).json({

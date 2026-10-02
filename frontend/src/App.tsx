@@ -7,6 +7,7 @@ import { useAuth } from "./context/AuthContext";
 import Admin from "./pages/Admin";
 import Catalog from "./pages/Catalog";
 import Favorites from "./pages/Favorites";
+import Profile from "./pages/Profile";
 import ForgotPassword from "./pages/ForgotPassword";
 import Login from "./pages/Login";
 import MovieDetails from "./pages/MovieDetails";
@@ -51,6 +52,7 @@ export default function App() {
           <Route path="/catalog" element={<Catalog />} />
           <Route path="/movie/:id" element={<MovieDetails />} />
           <Route path="/favorites" element={<Favorites />} />
+          <Route path="/profile/:id" element={<Profile />} />
           <Route element={<ProtectedRoute adminOnly />}>
             <Route path="/admin" element={<Admin />} />
           </Route>

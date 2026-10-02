@@ -32,6 +32,7 @@ export default function Header() {
           <nav className={`primary-nav ${menuOpen ? "is-open" : ""}`} aria-label="Navegação principal" onClick={() => setMenuOpen(false)}>
             <NavLink to="/catalog">Catálogo</NavLink>
             <NavLink to="/favorites">Favoritos</NavLink>
+            {user && <NavLink to={`/profile/${user.id}`}>Meu perfil</NavLink>}
             {user?.role === "admin" && <NavLink to="/admin">Moderação</NavLink>}
             <div className="nav-account">
               <span className="user-greeting">{user?.nome}<small>{user?.role === "admin" ? "ADMINISTRADOR" : "MEMBRO"}</small></span>
