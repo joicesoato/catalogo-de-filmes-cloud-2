@@ -18,6 +18,7 @@ export default function Profile() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [premiumLoading, setPremiumLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -49,6 +50,18 @@ export default function Profile() {
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Não foi possível salvar o perfil.");
     } finally { setSaving(false); }
+  }
+
+  async function startPremiumCheckout() {
+    setPremiumLoading(true);
+    setError("");
+    try {
+      const result = await endpoints.premiumCheckout();
+      window.location.assign(result.url);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Não foi possível iniciar o checkout.");
+      setPremiumLoading(false);
+    }
   }
 
   async function upload(event: ChangeEvent<HTMLInputElement>) {
@@ -84,7 +97,14 @@ export default function Profile() {
           </div>
           <div className="profile-main">
             <span className="eyebrow">{profile.role === "admin" ? "ADMINISTRADOR" : "MEMBRO"}</span>
+            {profile.premium && <span className="premium-badge" aria-label="Plano Premium ativo">✦ PREMIUM</span>}
             <h2>{profile.nome}</h2>
+            {isOwner && !profile.premium && <div className="premium-prompt">
+              <p>Desbloqueie seu selo Premium com uma assinatura mensal.</p>
+              <button className="button button-primary" type="button" onClick={() => void startPremiumCheckout()} disabled={premiumLoading}>
+                {premiumLoading ? "Conectando ao Stripe..." : "Conhecer Plano Premium"}
+              </button>
+            </div>}
             {profile.email && <p className="profile-email">{profile.email}</p>}
             <p className="profile-bio">{profile.bio || "Ainda não há uma bio cadastrada."}</p>
           </div>

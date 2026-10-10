@@ -12,6 +12,7 @@ export interface Profile {
   nome: string;
   email?: string;
   role: Role;
+  premium: boolean;
   bio: string;
   avatar_url: string | null;
   criado_em: string;

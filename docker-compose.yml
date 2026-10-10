@@ -35,6 +35,9 @@ services:
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
       MINIO_BUCKET: ${MINIO_BUCKET:-profile-photos}
       MINIO_REGION: ${MINIO_REGION:-us-east-1}
+      STRIPE_SECRET_KEY: "${STRIPE_SECRET_KEY}"
+      STRIPE_WEBHOOK_SECRET: "${STRIPE_WEBHOOK_SECRET}"
+      STRIPE_PRICE_ID: "${STRIPE_PRICE_ID}"
 
     ports:
       - "3000:3000"

@@ -50,6 +50,78 @@ app.use(helmet({
   },
   referrerPolicy: { policy: "same-origin" }
 }));
+// Stripe exige o corpo bruto para validar a assinatura do webhook.
+app.post("/api/stripe/webhook", express.raw({ type: "application/json", limit: "1mb" }), async (req, res) => {
+  const secret = process.env.STRIPE_WEBHOOK_SECRET;
+  const signatureHeader = req.get("stripe-signature") || "";
+  if (!secret) {
+    console.error("STRIPE_WEBHOOK_SECRET não configurado.");
+    return res.status(503).json({ erro: "Webhook de pagamento não configurado." });
+  }
+
+  try {
+    const timestamp = signatureHeader.match(/(?:^|,)\s*t=(\d+)/)?.[1];
+    const signatures = [...signatureHeader.matchAll(/(?:^|,)\s*v1=([a-f0-9]+)/gi)].map((item) => item[1]);
+    if (!timestamp || signatures.length === 0 || !Buffer.isBuffer(req.body)) {
+      return res.status(400).json({ erro: "Assinatura Stripe inválida." });
+    }
+    if (Math.abs(Date.now() / 1000 - Number(timestamp)) > 300) {
+      return res.status(400).json({ erro: "Assinatura Stripe expirada." });
+    }
+
+    const expected = crypto
+      .createHmac("sha256", secret)
+      .update(`${timestamp}.${req.body.toString("utf8")}`, "utf8")
+      .digest();
+    const valid = signatures.some((candidate) => {
+      const received = Buffer.from(candidate, "hex");
+      return received.length === expected.length && crypto.timingSafeEqual(received, expected);
+    });
+    if (!valid) return res.status(400).json({ erro: "Assinatura Stripe inválida." });
+
+    const event = JSON.parse(req.body.toString("utf8"));
+    const object = event.data?.object || {};
+    const idUsuario = Number(object.metadata?.user_id || object.client_reference_id || 0);
+
+    if (["checkout.session.completed", "checkout.session.async_payment_succeeded"].includes(event.type)) {
+      const paid = object.payment_status === "paid" || object.payment_status === "no_payment_required";
+      const subscriptionId = typeof object.subscription === "string" ? object.subscription : object.subscription?.id;
+      const customerId = typeof object.customer === "string" ? object.customer : object.customer?.id;
+      if (paid && Number.isInteger(idUsuario) && idUsuario > 0 && subscriptionId) {
+        await pool.execute(
+          `UPDATE usuarios
+           SET premium = TRUE, stripe_customer_id = ?, stripe_subscription_id = ?, premium_updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+          [customerId || null, subscriptionId, idUsuario]
+        );
+        console.info(`Plano Premium ativado para usuário ${idUsuario}.`);
+      }
+    } else if (event.type === "customer.subscription.updated" || event.type === "customer.subscription.deleted") {
+      const subscriptionId = object.id;
+      const statusPremium = event.type !== "customer.subscription.deleted" &&
+        ["active", "trialing"].includes(object.status);
+      if (Number.isInteger(idUsuario) && idUsuario > 0 && subscriptionId) {
+        await pool.execute(
+          `UPDATE usuarios
+           SET premium = ?, stripe_customer_id = ?, stripe_subscription_id = ?, premium_updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+          [statusPremium, typeof object.customer === "string" ? object.customer : object.customer?.id || null, subscriptionId, idUsuario]
+        );
+      } else if (subscriptionId) {
+        await pool.execute(
+          `UPDATE usuarios SET premium = ?, premium_updated_at = CURRENT_TIMESTAMP WHERE stripe_subscription_id = ?`,
+          [statusPremium, subscriptionId]
+        );
+      }
+    }
+
+    return res.json({ recebido: true });
+  } catch (erro) {
+    console.error("Erro ao processar webhook Stripe:", erro.message);
+    return res.status(400).json({ erro: "Não foi possível processar o evento Stripe." });
+  }
+});
+
 app.use(express.json({ limit: "20kb" }));
 app.use(express.urlencoded({ extended: true }));
 
@@ -100,34 +172,46 @@ function validarImagemPerfil(buffer, mimeType) {
 }
 
 function extrairMultipart(buffer, contentType) {
-  if (!Buffer.isBuffer(buffer)) return null;
-  const match = contentType.match(/boundary=(?:"([^"]+)"|([^;]+))/i);
-  if (!match) return null;
-  const boundary = Buffer.from(`--${match[1] || match[2]}`);
-  const partes = [];
-  let inicio = 0;
-  while (true) {
-    const indice = buffer.indexOf(boundary, inicio);
-    if (indice === -1) break;
-    if (inicio !== 0) {
-      let parte = buffer.subarray(inicio, indice);
-      if (parte.subarray(0, 2).equals(Buffer.from("\r\n"))) parte = parte.subarray(2);
-      if (parte.length && !parte.equals(Buffer.from("--\r\n"))) partes.push(parte);
+  if (!Buffer.isBuffer(buffer) || buffer.length === 0) return null;
+  const match = String(contentType || "").match(/boundary=(?:"([^"]+)"|([^;]+))/i);
+  const boundaryValue = match?.[1] || match?.[2]?.trim();
+  if (!boundaryValue) return null;
+
+  const boundary = Buffer.from(`--${boundaryValue}`);
+  let cursor = buffer.indexOf(boundary);
+  if (cursor < 0) return null;
+  cursor += boundary.length;
+
+  while (cursor < buffer.length) {
+    // Final multipart boundary.
+    if (buffer.subarray(cursor, cursor + 2).equals(Buffer.from("--"))) return null;
+    if (buffer.subarray(cursor, cursor + 2).equals(Buffer.from("\r\n"))) cursor += 2;
+
+    const nextBoundary = buffer.indexOf(boundary, cursor);
+    if (nextBoundary < 0) return null;
+
+    let part = buffer.subarray(cursor, nextBoundary);
+    if (part.subarray(-2).equals(Buffer.from("\r\n"))) part = part.subarray(0, -2);
+
+    const separator = part.indexOf(Buffer.from("\r\n\r\n"));
+    if (separator >= 0) {
+      const headers = part.subarray(0, separator).toString("latin1");
+      const body = part.subarray(separator + 4);
+      const dispositionLine = headers
+        .split("\r\n")
+        .find((line) => /^content-disposition:/i.test(line));
+      const name = dispositionLine?.match(/(?:^|;)\s*name="([^"]*)"/i)?.[1];
+      const filename = dispositionLine?.match(/(?:^|;)\s*filename="([^"]*)"/i)?.[1] || "";
+      const mimeType = headers.match(/^content-type:\s*([^\r\n]+)/im)?.[1]?.trim().toLowerCase() || "";
+
+      if (name === "foto" && filename) {
+        return { name, filename, mimeType, buffer: body };
+      }
     }
-    inicio = indice + boundary.length;
+
+    cursor = nextBoundary + boundary.length;
   }
 
-  for (const parte of partes) {
-    const separador = parte.indexOf(Buffer.from("\r\n\r\n"));
-    if (separador === -1) continue;
-    const cabecalhos = parte.subarray(0, separador).toString("utf8");
-    let conteudo = parte.subarray(separador + 4);
-    if (conteudo.subarray(-2).equals(Buffer.from("\r\n"))) conteudo = conteudo.subarray(0, -2);
-    const disposition = cabecalhos.match(/content-disposition:\s*form-data;[^\r\n]*name="([^"]+)"(?:;\s*filename="([^"]*)")?/i);
-    if (!disposition) continue;
-    const mime = cabecalhos.match(/content-type:\s*([^\r\n]+)/i)?.[1]?.trim().toLowerCase() || "";
-    return { name: disposition[1], filename: disposition[2] || "", mimeType: mime, buffer: conteudo };
-  }
   return null;
 }
 
@@ -340,7 +424,7 @@ app.get("/api/profile/:id", exigirLogin, async (req, res) => {
     if (!/^\d+$/.test(req.params.id)) return res.status(400).json({ erro: "ID de usuário inválido." });
     const usuarioId = Number(req.params.id);
     const [usuarios] = await pool.execute(
-      `SELECT id, nome, email, role, bio, avatar_object_key, criado_em
+      `SELECT id, nome, email, role, bio, avatar_object_key, premium, criado_em
        FROM usuarios WHERE id = ?`,
       [usuarioId]
     );
@@ -359,6 +443,7 @@ app.get("/api/profile/:id", exigirLogin, async (req, res) => {
         nome: usuario.nome,
         ...(dono ? { email: usuario.email } : {}),
         role: usuario.role,
+        premium: Boolean(usuario.premium),
         bio: usuario.bio || "",
         avatar_url: usuario.avatar_object_key
           ? `/api/profile/${usuario.id}/avatar`
@@ -400,7 +485,11 @@ app.patch("/api/profile/:id", exigirLogin, async (req, res) => {
   }
 });
 
-app.post("/api/profile/:id/avatar", exigirLogin, express.raw({ type: "multipart/form-data", limit: "5.5mb" }), async (req, res) => {
+app.post(
+  "/api/profile/:id/avatar",
+  exigirLogin,
+  express.raw({ type: "multipart/form-data", limit: "5.5mb" }),
+  async (req, res) => {
   try {
     const usuarioId = validarIdUsuario(req, res);
     if (!usuarioId) return;
@@ -440,9 +529,65 @@ app.post("/api/profile/:id/avatar", exigirLogin, express.raw({ type: "multipart/
       mensagem: "Foto de perfil atualizada.",
       avatar_url: `/api/profile/${usuarioId}/avatar`
     });
-      } catch (erro) {
-        console.error("Erro no upload do perfil:", erro.message);
-        res.status(500).json({ erro: "Não foi possível salvar a foto de perfil." });
+  } catch (erro) {
+    console.error("Erro no upload do perfil:", erro.message);
+    res.status(500).json({ erro: "Não foi possível salvar a foto de perfil." });
+  }
+});
+
+// Cria uma Checkout Session no Stripe. Os dados do cartão são coletados somente pelo Stripe.
+app.post("/api/premium/checkout", exigirLogin, async (req, res) => {
+  const stripeSecret = process.env.STRIPE_SECRET_KEY;
+  const priceId = process.env.STRIPE_PRICE_ID;
+  if (!stripeSecret || !priceId) {
+    return res.status(503).json({ erro: "Checkout indisponível: configure STRIPE_SECRET_KEY e STRIPE_PRICE_ID." });
+  }
+
+  try {
+    const usuarioId = Number(req.session.usuario.id);
+    const [rows] = await pool.execute(
+      "SELECT id, nome, email, premium FROM usuarios WHERE id = ?",
+      [usuarioId]
+    );
+    if (!rows.length) return res.status(404).json({ erro: "Usuário não encontrado." });
+    if (Boolean(rows[0].premium)) return res.status(409).json({ erro: "Este usuário já possui o Plano Premium." });
+
+    const baseUrl = String(process.env.APP_URL || "").replace(/\/+$/, "");
+    if (!/^https?:\/\//i.test(baseUrl)) {
+      return res.status(500).json({ erro: "APP_URL precisa ser uma URL pública válida." });
+    }
+
+    const form = new URLSearchParams();
+    form.set("mode", "subscription");
+    form.set("line_items[0][price]", priceId);
+    form.set("line_items[0][quantity]", "1");
+    form.set("success_url", `${baseUrl}/profile/${usuarioId}?premium=success`);
+    form.set("cancel_url", `${baseUrl}/profile/${usuarioId}?premium=cancelled`);
+    form.set("client_reference_id", String(usuarioId));
+    form.set("customer_email", rows[0].email);
+    form.set("metadata[user_id]", String(usuarioId));
+    form.set("subscription_data[metadata][user_id]", String(usuarioId));
+
+    const response = await fetch("https://api.stripe.com/v1/checkout/sessions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${stripeSecret}`,
+        "Content-Type": "application/x-www-form-urlencoded"
+      },
+      body: form,
+      signal: AbortSignal.timeout(15000)
+    });
+    const data = await response.json();
+    if (!response.ok || !data.url) {
+      console.error("Stripe Checkout falhou:", data.error?.message || response.status);
+      return res.status(502).json({ erro: "Não foi possível iniciar o checkout do Stripe. Verifique a configuração do plano." });
+    }
+
+    void registrarAuditoria(req, "premium_checkout_created", { checkout_session_id: data.id });
+    return res.json({ url: data.url });
+  } catch (erro) {
+    console.error("Erro ao criar checkout Stripe:", erro.message);
+    return res.status(502).json({ erro: "Não foi possível conectar ao Stripe." });
   }
 });
 

@@ -941,3 +941,55 @@ https://github.com/joicesoato/catalogo-de-filmes-cloud-2
 Relatório acadêmico:
 
 ./P1_ISW055_Joice_Soato_Brito.pdf
+
+
+## 8. ATIVIDADE 6 — PERFIL E UPLOAD DE IMAGEM
+
+A aplicação recebe a foto de perfil no endpoint `POST /api/profile/:id/avatar`, no campo multipart `foto`. O backend valida o tipo real e o tamanho do arquivo antes de armazená-lo no MinIO. O navegador não envia o arquivo como JSON e não precisa definir manualmente o cabeçalho `Content-Type`, pois o `FormData` cria o boundary automaticamente.
+
+Para atualizar uma instalação existente, confirme que o MinIO está acessível pela rede interna do Docker e que `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY` e `MINIO_BUCKET` correspondem ao serviço em execução.
+
+## 9. ATIVIDADE 7 — PLANO PREMIUM COM STRIPE
+
+O projeto implementa um checkout de assinatura com Stripe em modo de teste. Os dados do cartão são digitados exclusivamente na página hospedada pelo Stripe; a aplicação não armazena número de cartão, CVV ou validade.
+
+### Configuração do banco
+
+Execute uma vez no banco de dados já utilizado pelo projeto:
+
+```bash
+mysql -h "$DB_HOST" -u "$DB_USER" -p "$DB_NAME" < database/migration-v6.sql
+```
+
+A migração adiciona `premium`, `stripe_customer_id`, `stripe_subscription_id` e `premium_updated_at` à tabela `usuarios`, preservando os usuários existentes.
+
+### Configuração do Stripe em modo de teste
+
+1. Entre no [Dashboard do Stripe](https://dashboard.stripe.com/) e ative **Test mode**.
+2. Em Product catalog, crie o produto **Plano Premium** e um preço recorrente mensal, por exemplo **R$ 9,90/mês**.
+3. Copie o ID do preço, que começa com `price_`.
+4. Em Developers → API keys, copie a chave secreta de teste, que começa com `sk_test_`.
+5. Configure no Portainer/ambiente da aplicação:
+   - `STRIPE_SECRET_KEY`: chave secreta de teste (`sk_test_...`).
+   - `STRIPE_PRICE_ID`: ID do preço recorrente (`price_...`).
+   - `STRIPE_WEBHOOK_SECRET`: segredo de assinatura do webhook (`whsec_...`).
+6. Cadastre um webhook para `https://SEU-DOMINIO/api/stripe/webhook` com os eventos:
+   - `checkout.session.completed`
+   - `checkout.session.async_payment_succeeded`
+   - `customer.subscription.updated`
+   - `customer.subscription.deleted`
+7. Use a chave `whsec_...` fornecida para esse endpoint. Não use a chave de produção nem compartilhe esses segredos publicamente.
+
+Para testar localmente, o Stripe CLI pode encaminhar eventos para `http://localhost:3000/api/stripe/webhook`; use o segredo `whsec_...` informado pelo comando `stripe listen`.
+
+### Fluxo implementado
+
+- `POST /api/premium/checkout`: exige usuário autenticado e cria uma Checkout Session no Stripe.
+- `POST /api/stripe/webhook`: valida a assinatura HMAC do Stripe e só então processa o evento.
+- Após confirmação de pagamento, o usuário recebe `premium = true` e os IDs do cliente/assinatura.
+- Se a assinatura for cancelada ou deixar de estar ativa, o webhook atualiza o status Premium.
+- O perfil mostra o selo **PREMIUM** quando o plano está ativo e oferece o botão para iniciar o checkout a quem ainda não assina.
+
+### Cartão de teste
+
+No modo de teste do Stripe, use o cartão de teste `4242 4242 4242 4242`, uma data futura e qualquer CVC de três dígitos. Não utilize cartões reais. A confirmação do Premium depende da entrega do webhook válido; aguarde alguns segundos e atualize o perfil após finalizar o checkout.

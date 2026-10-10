@@ -90,6 +90,7 @@ export const endpoints = {
   auditLogs: (limit = 50) => api.get<{ logs: import("../types").AuditLog[] }>(`/api/admin/logs?limit=${limit}`),
   profile: (id: number) => api.get<{ perfil: import("../types").Profile; favoritos: Favorite[] }>(`/api/profile/${id}`),
   updateProfile: (id: number, body: { nome: string; bio: string }) => api.patch<ApiMessage>(`/api/profile/${id}`, body),
+  premiumCheckout: () => api.post<{ url: string }>("/api/premium/checkout", {}),
   uploadProfileAvatar: (id: number, file: File) => {
     const form = new FormData();
     form.append("foto", file);
