@@ -355,6 +355,46 @@ O tamanho máximo permitido é de 5 MB.
 Arquivos que não atendem às validações são rejeitados antes do armazenamento.
 
 
+
+## 11. ATIVIDADE 7 — PLANO PREMIUM COM STRIPE
+
+O Plano Premium diferencia o comportamento do usuário no backend, não apenas na interface:
+
+- Usuário comum pode salvar até 10 favoritos.
+- Usuário Premium pode salvar favoritos sem esse limite.
+- O upload de foto de perfil é exclusivo de usuários Premium.
+- O selo Premium é exibido no perfil com base no status persistido no banco.
+- O checkout é criado pelo backend com Stripe Checkout em modo de assinatura.
+- O status Premium é atualizado por eventos Stripe enviados ao endpoint `POST /api/stripe/webhook`, com validação da assinatura `Stripe-Signature`.
+- A autorização de administrador continua separada do status Premium; ser Premium não concede permissões administrativas.
+
+### Migração do banco existente
+
+Antes de publicar a imagem nova, aplique `database/migration-v6.sql` no banco utilizado pela Stack. Essa migração adiciona as colunas Stripe/Premium sem recriar tabelas ou apagar usuários e favoritos.
+
+Confirme que o comando está conectado ao banco configurado nas variáveis `DB_HOST`, `DB_PORT`, `DB_NAME` e `DB_USER`. Não execute `init.sql` sobre um banco existente como substituto da migração e não remova os volumes.
+
+### Variáveis do Stripe
+
+Configure na Stack do Portainer:
+
+- `STRIPE_SECRET_KEY`: chave de teste `sk_test_...`
+- `STRIPE_WEBHOOK_SECRET`: segredo do endpoint webhook `whsec_...`
+- `STRIPE_PRICE_ID`: identificador do preço recorrente `price_...`
+- `APP_URL`: URL pública HTTPS da aplicação em produção.
+
+Cadastre no Stripe o endpoint `https://SEU-DOMINIO/api/stripe/webhook` e habilite pelo menos `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `customer.subscription.updated` e `customer.subscription.deleted`. Use o domínio real da implantação, não o texto de exemplo.
+
+### Verificações após a implantação
+
+1. `GET /health` deve retornar HTTP 200 e todas as dependências como `ok`.
+2. Um usuário comum com 10 favoritos recebe HTTP 403 ao tentar adicionar o 11º.
+3. Um usuário comum recebe HTTP 403 ao tentar enviar foto de perfil.
+4. Um usuário Premium consegue ultrapassar 10 favoritos e enviar uma imagem válida.
+5. O webhook deve ativar/desativar o Premium conforme eventos de assinatura assinados pelo Stripe.
+6. O perfil deve carregar `premium` e não retornar `Unknown column 'premium'`.
+
+
 ## 10. MINIO
 
 O armazenamento das fotos de perfil utiliza MinIO, compatível com a API S3.

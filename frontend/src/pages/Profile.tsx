@@ -93,18 +93,19 @@ export default function Profile() {
         <article className="profile-card">
           <div className="profile-avatar-wrap">
             {profile.avatar_url ? <img className="profile-avatar" src={profile.avatar_url} alt={`Foto de ${profile.nome}`} /> : <div className="profile-avatar profile-avatar-fallback" aria-hidden="true">{profile.nome.slice(0, 1).toUpperCase()}</div>}
-            {isOwner && <label className="button button-secondary profile-upload">{uploading ? "Enviando..." : "Trocar foto"}<input type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={upload} disabled={uploading} /></label>}
+            {isOwner && profile.premium && <label className="button button-secondary profile-upload">{uploading ? "Enviando..." : "Trocar foto"}<input type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={upload} disabled={uploading} /></label>}
           </div>
           <div className="profile-main">
             <span className="eyebrow">{profile.role === "admin" ? "ADMINISTRADOR" : "MEMBRO"}</span>
             {profile.premium && <span className="premium-badge" aria-label="Plano Premium ativo">✦ PREMIUM</span>}
             <h2>{profile.nome}</h2>
             {isOwner && !profile.premium && <div className="premium-prompt">
-              <p>Desbloqueie seu selo Premium com uma assinatura mensal.</p>
+              <p>Desbloqueie favoritos ilimitados, selo Premium no perfil e a opção de adicionar foto de perfil com uma assinatura mensal.</p>
               <button className="button button-primary" type="button" onClick={() => void startPremiumCheckout()} disabled={premiumLoading}>
                 {premiumLoading ? "Conectando ao Stripe..." : "Conhecer Plano Premium"}
               </button>
             </div>}
+            {isOwner && profile.premium && <p className="premium-benefit-note">Seu plano Premium está ativo: favoritos ilimitados e foto de perfil habilitada.</p>}
             {profile.email && <p className="profile-email">{profile.email}</p>}
             <p className="profile-bio">{profile.bio || "Ainda não há uma bio cadastrada."}</p>
           </div>

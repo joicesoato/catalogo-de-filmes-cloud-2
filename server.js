@@ -54,17 +54,23 @@ app.use(helmet({
 app.post("/api/stripe/webhook", express.raw({ type: "application/json", limit: "1mb" }), async (req, res) => {
   const secret = process.env.STRIPE_WEBHOOK_SECRET;
   const signatureHeader = req.get("stripe-signature") || "";
+
   if (!secret) {
     console.error("STRIPE_WEBHOOK_SECRET não configurado.");
     return res.status(503).json({ erro: "Webhook de pagamento não configurado." });
   }
 
+  let conexao;
+  let transacaoIniciada = false;
+
   try {
     const timestamp = signatureHeader.match(/(?:^|,)\s*t=(\d+)/)?.[1];
     const signatures = [...signatureHeader.matchAll(/(?:^|,)\s*v1=([a-f0-9]+)/gi)].map((item) => item[1]);
+
     if (!timestamp || signatures.length === 0 || !Buffer.isBuffer(req.body)) {
       return res.status(400).json({ erro: "Assinatura Stripe inválida." });
     }
+
     if (Math.abs(Date.now() / 1000 - Number(timestamp)) > 300) {
       return res.status(400).json({ erro: "Assinatura Stripe expirada." });
     }
@@ -73,52 +79,98 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json", limit: "
       .createHmac("sha256", secret)
       .update(`${timestamp}.${req.body.toString("utf8")}`, "utf8")
       .digest();
+
     const valid = signatures.some((candidate) => {
       const received = Buffer.from(candidate, "hex");
       return received.length === expected.length && crypto.timingSafeEqual(received, expected);
     });
+
     if (!valid) return res.status(400).json({ erro: "Assinatura Stripe inválida." });
 
     const event = JSON.parse(req.body.toString("utf8"));
+    if (!event.id || !event.type) {
+      return res.status(400).json({ erro: "Evento Stripe inválido." });
+    }
+
     const object = event.data?.object || {};
     const idUsuario = Number(object.metadata?.user_id || object.client_reference_id || 0);
+    const subscriptionId = typeof object.subscription === "string"
+      ? object.subscription
+      : object.subscription?.id;
+    const customerId = typeof object.customer === "string"
+      ? object.customer
+      : object.customer?.id || null;
+
+    conexao = await pool.getConnection();
+    await conexao.beginTransaction();
+    transacaoIniciada = true;
+
+    // O ID do evento é único: eventos já processados não são aplicados novamente.
+    await conexao.execute(
+      "INSERT INTO stripe_webhook_events (event_id, event_type) VALUES (?, ?)",
+      [event.id, event.type]
+    );
 
     if (["checkout.session.completed", "checkout.session.async_payment_succeeded"].includes(event.type)) {
       const paid = object.payment_status === "paid" || object.payment_status === "no_payment_required";
-      const subscriptionId = typeof object.subscription === "string" ? object.subscription : object.subscription?.id;
-      const customerId = typeof object.customer === "string" ? object.customer : object.customer?.id;
+
       if (paid && Number.isInteger(idUsuario) && idUsuario > 0 && subscriptionId) {
-        await pool.execute(
+        const [resultado] = await conexao.execute(
           `UPDATE usuarios
-           SET premium = TRUE, stripe_customer_id = ?, stripe_subscription_id = ?, premium_updated_at = CURRENT_TIMESTAMP
+           SET premium = TRUE, stripe_customer_id = ?, stripe_subscription_id = ?,
+               premium_updated_at = CURRENT_TIMESTAMP
            WHERE id = ?`,
-          [customerId || null, subscriptionId, idUsuario]
+          [customerId, subscriptionId, idUsuario]
         );
-        console.info(`Plano Premium ativado para usuário ${idUsuario}.`);
+
+        if (resultado.affectedRows > 0) {
+          console.info(`Plano Premium ativado para usuário ${idUsuario}.`);
+        }
       }
-    } else if (event.type === "customer.subscription.updated" || event.type === "customer.subscription.deleted") {
-      const subscriptionId = object.id;
+    } else if (event.type === "customer.subscription.updated" ||
+               event.type === "customer.subscription.deleted") {
+      const idAssinatura = object.id;
       const statusPremium = event.type !== "customer.subscription.deleted" &&
         ["active", "trialing"].includes(object.status);
-      if (Number.isInteger(idUsuario) && idUsuario > 0 && subscriptionId) {
-        await pool.execute(
+
+      if (idAssinatura) {
+        // Prioriza o vínculo já salvo; os metadados são uma alternativa.
+        const [resultado] = await conexao.execute(
           `UPDATE usuarios
-           SET premium = ?, stripe_customer_id = ?, stripe_subscription_id = ?, premium_updated_at = CURRENT_TIMESTAMP
-           WHERE id = ?`,
-          [statusPremium, typeof object.customer === "string" ? object.customer : object.customer?.id || null, subscriptionId, idUsuario]
+           SET premium = ?, stripe_customer_id = COALESCE(?, stripe_customer_id),
+               premium_updated_at = CURRENT_TIMESTAMP
+           WHERE stripe_subscription_id = ?`,
+          [statusPremium, customerId, idAssinatura]
         );
-      } else if (subscriptionId) {
-        await pool.execute(
-          `UPDATE usuarios SET premium = ?, premium_updated_at = CURRENT_TIMESTAMP WHERE stripe_subscription_id = ?`,
-          [statusPremium, subscriptionId]
-        );
+
+        if (resultado.affectedRows === 0 && Number.isInteger(idUsuario) && idUsuario > 0) {
+          await conexao.execute(
+            `UPDATE usuarios
+             SET premium = ?, stripe_customer_id = COALESCE(?, stripe_customer_id),
+                 stripe_subscription_id = ?, premium_updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?`,
+            [statusPremium, customerId, idAssinatura, idUsuario]
+          );
+        }
       }
     }
 
+    await conexao.commit();
+    transacaoIniciada = false;
     return res.json({ recebido: true });
   } catch (erro) {
+    if (transacaoIniciada && conexao) {
+      await conexao.rollback().catch(() => {});
+    }
+
+    if (erro.code === "ER_DUP_ENTRY") {
+      return res.json({ recebido: true, duplicado: true });
+    }
+
     console.error("Erro ao processar webhook Stripe:", erro.message);
-    return res.status(400).json({ erro: "Não foi possível processar o evento Stripe." });
+    return res.status(500).json({ erro: "Não foi possível processar o evento Stripe." });
+  } finally {
+    conexao?.release();
   }
 });
 
@@ -494,6 +546,24 @@ app.post(
     const usuarioId = validarIdUsuario(req, res);
     if (!usuarioId) return;
 
+    // Foto de perfil é um benefício exclusivo do plano Premium.
+    const [statusPlano] = await pool.execute(
+      "SELECT premium FROM usuarios WHERE id = ?",
+      [usuarioId]
+    );
+    if (!statusPlano.length) {
+      return res.status(404).json({ erro: "Usuário não encontrado." });
+    }
+    if (!Boolean(statusPlano[0].premium)) {
+      void registrarAuditoria(req, "access_denied_403", {
+        permissao: "premium:profile_avatar",
+        usuario_id: usuarioId
+      });
+      return res.status(403).json({
+        erro: "A foto de perfil é um benefício exclusivo do Plano Premium."
+      });
+    }
+
     const arquivo = extrairMultipart(req.body, req.get("content-type") || "");
     if (!arquivo || arquivo.name !== "foto" || !arquivo.filename) {
       return res.status(400).json({ erro: "Envie uma imagem no campo foto." });
@@ -606,24 +676,70 @@ app.get("/api/favorites", exigirLogin, async (req, res) => {
 });
 
 app.post("/api/favorites", exigirLogin, async (req, res) => {
+  let conexao;
   try {
     const { tmdb_movie_id, titulo, poster_path } = req.body;
-    if (!/^\d+$/.test(String(tmdb_movie_id || "")) || !titulo?.trim() || titulo.length > 255) {
+    if (!/^\d+$/.test(String(tmdb_movie_id || "")) || typeof titulo !== "string" || !titulo.trim() || titulo.length > 255) {
       return res.status(400).json({ erro: "ID e título do filme são obrigatórios." });
     }
-    await pool.execute(
+    if (poster_path != null && (typeof poster_path !== "string" || poster_path.length > 255)) {
+      return res.status(400).json({ erro: "Caminho do pôster inválido." });
+    }
+
+    // Serializa adições do mesmo usuário para evitar ultrapassar o limite em requisições simultâneas.
+    conexao = await pool.getConnection();
+    await conexao.beginTransaction();
+    const usuarioId = Number(req.session.usuario.id);
+    const [usuarios] = await conexao.execute(
+      "SELECT premium FROM usuarios WHERE id = ? FOR UPDATE",
+      [usuarioId]
+    );
+    if (!usuarios.length) {
+      await conexao.rollback();
+      return res.status(401).json({ erro: "Usuário não encontrado. Entre novamente." });
+    }
+
+    const premium = Boolean(usuarios[0].premium);
+    if (!premium) {
+      const [[contagem]] = await conexao.execute(
+        "SELECT COUNT(*) AS total FROM favoritos WHERE usuario_id = ?",
+        [usuarioId]
+      );
+      if (Number(contagem.total) >= 10) {
+        await conexao.rollback();
+        return res.status(403).json({
+          codigo: "FAVORITES_LIMIT_REACHED",
+          limite: 10,
+          erro: "Usuários comuns podem salvar até 10 favoritos. Assine o Plano Premium para salvar favoritos ilimitados."
+        });
+      }
+    }
+
+    await conexao.execute(
       `INSERT INTO favoritos (usuario_id, tmdb_movie_id, titulo, poster_path)
        VALUES (?, ?, ?, ?)`,
-      [req.session.usuario.id, tmdb_movie_id, titulo.trim(), poster_path || null]
+      [usuarioId, Number(tmdb_movie_id), titulo.trim(), poster_path || null]
     );
-    void registrarAuditoria(req, "favorite_add", { tmdb_movie_id: Number(tmdb_movie_id), titulo: titulo.trim() });
-    res.status(201).json({ mensagem: "Filme adicionado aos favoritos." });
+    await conexao.commit();
+    void registrarAuditoria(req, "favorite_add", {
+      tmdb_movie_id: Number(tmdb_movie_id),
+      titulo: titulo.trim(),
+      premium
+    });
+    return res.status(201).json({
+      mensagem: "Filme adicionado aos favoritos.",
+      premium,
+      limite: premium ? null : 10
+    });
   } catch (erro) {
+    if (conexao) await conexao.rollback().catch(() => {});
     if (erro.code === "ER_DUP_ENTRY") {
       return res.status(409).json({ erro: "Este filme já está nos seus favoritos." });
     }
     console.error("Erro ao adicionar favorito:", erro.message);
-    res.status(500).json({ erro: "Não foi possível adicionar o favorito." });
+    return res.status(500).json({ erro: "Não foi possível adicionar o favorito." });
+  } finally {
+    conexao?.release();
   }
 });
 
