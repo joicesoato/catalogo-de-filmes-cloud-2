@@ -53,6 +53,7 @@ Entre os principais recursos implementados estão:
 - Perfil de usuário
 - Upload de foto de perfil
 - Armazenamento de imagens no MinIO
+- Assinatura Premium com Stripe Checkout em modo de teste
 - Redis Streams
 - Health checks
 - Métricas
@@ -356,46 +357,127 @@ Arquivos que não atendem às validações são rejeitados antes do armazenament
 
 
 
-## 11. ATIVIDADE 7 — PLANO PREMIUM COM STRIPE
+## 10. ATIVIDADE 7 — PLANO PREMIUM COM STRIPE
 
-O Plano Premium diferencia o comportamento do usuário no backend, não apenas na interface:
+A Atividade 7 acrescenta ao catálogo um modelo de assinatura Premium com cobrança real em **modo de teste** por meio do Stripe Checkout. O processamento dos dados de cartão ocorre na página hospedada pelo Stripe; a aplicação não deve armazenar número do cartão, CVV ou validade.
 
-- Usuário comum pode salvar até 10 favoritos.
-- Usuário Premium pode salvar favoritos sem esse limite.
-- O upload de foto de perfil é exclusivo de usuários Premium.
-- O selo Premium é exibido no perfil com base no status persistido no banco.
-- O checkout é criado pelo backend com Stripe Checkout em modo de assinatura.
-- O status Premium é atualizado por eventos Stripe enviados ao endpoint `POST /api/stripe/webhook`, com validação da assinatura `Stripe-Signature`.
-- A autorização de administrador continua separada do status Premium; ser Premium não concede permissões administrativas.
+### Regras de negócio
 
-### Migração do banco existente
+- Usuários comuns podem manter até 10 filmes favoritos.
+- Usuários Premium podem salvar favoritos sem esse limite.
+- O envio de foto de perfil é restrito a usuários Premium.
+- O perfil exibe o selo Premium com base no status persistido no banco de dados.
+- O checkout é criado no backend e utiliza um preço recorrente configurado no Stripe.
+- O status Premium é atualizado a partir de eventos recebidos do Stripe e validados no webhook.
+- O papel administrativo continua independente da assinatura: Premium não concede permissões de administrador.
 
-Antes de publicar a imagem nova, aplique `database/migration-v6.sql` no banco utilizado pela Stack. Essa migração adiciona as colunas Stripe/Premium sem recriar tabelas ou apagar usuários e favoritos.
+### Fluxo de assinatura
 
-Confirme que o comando está conectado ao banco configurado nas variáveis `DB_HOST`, `DB_PORT`, `DB_NAME` e `DB_USER`. Não execute `init.sql` sobre um banco existente como substituto da migração e não remova os volumes.
+1. O usuário autenticado solicita a criação do checkout.
+2. O backend cria uma Checkout Session com o preço recorrente definido por `STRIPE_PRICE_ID`.
+3. O usuário é direcionado à página hospedada pelo Stripe para concluir o pagamento de teste.
+4. O Stripe envia eventos ao endpoint de webhook da aplicação.
+5. O backend valida a assinatura enviada no cabeçalho `Stripe-Signature` usando `STRIPE_WEBHOOK_SECRET`.
+6. Depois de processar um evento válido, o backend atualiza o status e os identificadores Stripe associados ao usuário.
 
-### Variáveis do Stripe
+Endpoints envolvidos:
 
-Configure na Stack do Portainer:
+- `POST /api/premium/checkout`: exige autenticação e inicia o checkout.
+- `POST /api/stripe/webhook`: recebe eventos Stripe e valida a assinatura antes de processá-los.
 
-- `STRIPE_SECRET_KEY`: chave de teste `sk_test_...`
-- `STRIPE_WEBHOOK_SECRET`: segredo do endpoint webhook `whsec_...`
-- `STRIPE_PRICE_ID`: identificador do preço recorrente `price_...`
-- `APP_URL`: URL pública HTTPS da aplicação em produção.
+O redirecionamento de retorno do checkout, por si só, não deve ser tratado como comprovante de pagamento. A atualização do Premium depende do processamento de eventos válidos do Stripe.
 
-Cadastre no Stripe o endpoint `https://SEU-DOMINIO/api/stripe/webhook` e habilite pelo menos `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `customer.subscription.updated` e `customer.subscription.deleted`. Use o domínio real da implantação, não o texto de exemplo.
+### 1. Atualizar o banco de dados
 
-### Verificações após a implantação
+Antes de implantar a nova imagem, aplique a migration no **banco já utilizado pela Stack**:
 
-1. `GET /health` deve retornar HTTP 200 e todas as dependências como `ok`.
-2. Um usuário comum com 10 favoritos recebe HTTP 403 ao tentar adicionar o 11º.
-3. Um usuário comum recebe HTTP 403 ao tentar enviar foto de perfil.
-4. Um usuário Premium consegue ultrapassar 10 favoritos e enviar uma imagem válida.
-5. O webhook deve ativar/desativar o Premium conforme eventos de assinatura assinados pelo Stripe.
-6. O perfil deve carregar `premium` e não retornar `Unknown column 'premium'`.
+```bash
+mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" -p "$DB_NAME" < database/migration-v6.sql
+```
 
+A migration adiciona os campos necessários à assinatura, incluindo `premium`, `stripe_customer_id`, `stripe_subscription_id` e `premium_updated_at` à tabela `usuarios`, preservando os registros existentes.
 
-## 10. MINIO
+Cuidados importantes:
+
+- Confirme que as variáveis `DB_HOST`, `DB_PORT`, `DB_NAME` e `DB_USER` apontam para o banco correto.
+- Faça backup antes de alterar o banco.
+- Execute a migration uma única vez, verificando antes se ela já foi aplicada.
+- Não use `init.sql` como substituto da migration em um banco existente.
+- Não remova os volumes do banco para tentar resolver erros de coluna.
+
+### 2. Configurar o Stripe em modo de teste
+
+1. Acesse o [Dashboard do Stripe](https://dashboard.stripe.com/) e habilite **Test mode**.
+2. Crie o produto **Plano Premium** no catálogo de produtos.
+3. Adicione um preço recorrente mensal. O valor de exemplo pode ser R$ 9,90/mês; escolha e documente o preço realmente criado.
+4. Copie o identificador do preço, iniciado por `price_`.
+5. Em **Developers → API keys**, copie a chave secreta de teste, iniciada por `sk_test_`.
+6. Configure as variáveis de ambiente da aplicação.
+7. Cadastre o endpoint de webhook e copie o segredo gerado para esse endpoint.
+
+Variáveis necessárias:
+
+| Variável | Finalidade |
+|---|---|
+| `STRIPE_SECRET_KEY` | Chave secreta de teste do Stripe (`sk_test_...`). |
+| `STRIPE_PRICE_ID` | Identificador do preço recorrente (`price_...`). |
+| `STRIPE_WEBHOOK_SECRET` | Segredo usado para validar a assinatura dos eventos (`whsec_...`). |
+| `APP_URL` | URL pública da aplicação usada para os redirecionamentos de retorno. |
+
+No Portainer, inclua essas variáveis na Stack/serviço da aplicação e recrie ou atualize o serviço para que sejam carregadas. Não publique valores reais no README, no GitHub ou em capturas de tela.
+
+### 3. Configurar o webhook
+
+Cadastre no Dashboard do Stripe o endpoint:
+
+```text
+https://SEU-DOMINIO/api/stripe/webhook
+```
+
+Substitua `SEU-DOMINIO` pelo domínio HTTPS real da aplicação. Configure pelo menos os seguintes eventos, conforme suportados pelo código da aplicação:
+
+- `checkout.session.completed`
+- `checkout.session.async_payment_succeeded`
+- `customer.subscription.updated`
+- `customer.subscription.deleted`
+
+Copie o segredo `whsec_...` associado ao endpoint cadastrado e use-o em `STRIPE_WEBHOOK_SECRET`. O segredo gerado pelo Stripe CLI para desenvolvimento local é diferente do segredo do endpoint cadastrado no Dashboard.
+
+Para testes locais, o Stripe CLI pode encaminhar eventos para:
+
+```text
+http://localhost:3000/api/stripe/webhook
+```
+
+Use o segredo exibido pelo comando `stripe listen) no ambiente local. Nunca utilize chaves de produção durante os testes acadêmicos.
+
+### 4. Cartão de teste
+
+No modo de teste, um cartão de teste comum é:
+
+- Número: `4242 4242 4242 4242`
+- Validade: qualquer data futura válida
+- CVC: qualquer código de três dígitos
+
+Use apenas dados de teste disponibilizados pela documentação do Stripe, nunca dados de um cartão real. Após concluir o checkout, aguarde o webhook ser recebido e processado; depois, atualize o perfil para verificar o status Premium.
+
+### 5. Testes de aceitação
+
+- [ ] `GET /health` retorna HTTP 200 e indica que as dependências estão saudáveis.
+- [ ] Um usuário autenticado sem Premium consegue iniciar o checkout.
+- [ ] Um usuário comum com 10 favoritos recebe HTTP 403 ao tentar adicionar o 11º.
+- [ ] Um usuário comum recebe HTTP 403 ao tentar enviar foto de perfil.
+- [ ] Um usuário Premium consegue ultrapassar o limite de 10 favoritos.
+- [ ] Um usuário Premium consegue enviar uma imagem válida, respeitando as validações existentes.
+- [ ] Um evento de webhook com assinatura inválida é rejeitado.
+- [ ] Um evento válido atualiza o estado da assinatura conforme o status recebido do Stripe.
+- [ ] O cancelamento ou encerramento da assinatura atualiza o status Premium conforme a regra implementada.
+- [ ] O perfil mostra o selo Premium somente quando o status persistido estiver ativo.
+- [ ] O usuário Premium não recebe privilégios administrativos apenas por possuir a assinatura.
+
+Se o perfil apresentar erro como `Unknown column 'premium'`, verifique se `database/migration-v6.sql` foi aplicada ao banco que a aplicação realmente utiliza.
+
+## 11. MINIO
 
 O armazenamento das fotos de perfil utiliza MinIO, compatível com a API S3.
 
@@ -422,7 +504,7 @@ O backend localiza a referência da imagem no banco de dados, recupera o objeto 
 Dessa forma, o navegador não precisa conhecer as credenciais do MinIO.
 
 
-## 11. BANCO DE DADOS
+## 12. BANCO DE DADOS
 
 O projeto utiliza MariaDB/MySQL para persistência dos dados.
 
@@ -446,7 +528,7 @@ A migration relacionada a essa etapa está localizada em:
 database/migration-v5.sql
 
 
-## 12. ARQUITETURA DO PROJETO
+## 13. ARQUITETURA DO PROJETO
 
 A arquitetura é composta por diferentes serviços com responsabilidades separadas.
 
@@ -478,7 +560,7 @@ Estrutura simplificada:
 Os serviços internos se comunicam pela rede Docker.
 
 
-## 13. SERVIÇOS
+## 14. SERVIÇOS
 
 app
 
@@ -505,7 +587,7 @@ minio
 Responsável pelo armazenamento de objetos, principalmente as fotos de perfil.
 
 
-## 14. FRONTEND
+## 15. FRONTEND
 
 O frontend utiliza:
 
@@ -530,7 +612,7 @@ Entre as principais telas estão:
 Durante o build Docker, o Vite gera os arquivos de produção e o Express passa a servir a aplicação.
 
 
-## 15. SEGURANÇA
+## 16. SEGURANÇA
 
 Durante a evolução do projeto foram implementados diferentes mecanismos de segurança.
 
@@ -555,7 +637,7 @@ As senhas dos usuários não são armazenadas em texto puro.
 As informações sensíveis são configuradas por meio de variáveis de ambiente.
 
 
-## 16. HEALTH CHECK
+## 17. HEALTH CHECK
 
 A aplicação possui o endpoint:
 
@@ -573,7 +655,7 @@ Exemplo:
 Também existem health checks configurados nos containers Docker.
 
 
-## 17. MÉTRICAS
+## 18. MÉTRICAS
 
 A aplicação possui o endpoint:
 
@@ -590,7 +672,7 @@ As métricas permitem acompanhar informações relacionadas às requisições HT
 O formato das métricas é compatível com ferramentas como Prometheus.
 
 
-## 18. SWAGGER E OPENAPI
+## 19. SWAGGER E OPENAPI
 
 A documentação da API foi implementada utilizando Swagger/OpenAPI.
 
@@ -627,7 +709,7 @@ A documentação permite consultar endpoints, parâmetros, corpos das requisiç�
 Também é possível utilizar o recurso "Try it out" para testar endpoints diretamente pela interface do Swagger.
 
 
-## 19. CI/CD
+## 20. CI/CD
 
 O projeto possui pipeline de CI/CD utilizando GitHub Actions.
 
@@ -664,7 +746,7 @@ ou
 <sha-do-commit>
 
 
-## 20. DOCKER
+## 21. DOCKER
 
 O projeto utiliza Docker para executar os diferentes serviços em containers.
 
@@ -675,7 +757,7 @@ O frontend é construído inicialmente e posteriormente os arquivos de produçã
 Essa abordagem permite executar a aplicação utilizando uma imagem final adequada para produção.
 
 
-## 21. DOCKER COMPOSE
+## 22. DOCKER COMPOSE
 
 O ambiente pode ser executado utilizando Docker Compose.
 
@@ -700,7 +782,7 @@ Para encerrar os serviços:
 docker compose down
 
 
-## 22. PORTAINER
+## 23. PORTAINER
 
 A implantação no ambiente da disciplina também foi realizada utilizando Portainer.
 
@@ -721,7 +803,7 @@ Os serviços internos permanecem disponíveis pela rede Docker.
 Durante a implantação foram realizados ajustes relacionados às portas dos serviços devido a conflitos existentes no ambiente compartilhado.
 
 
-## 23. VARIÁVEIS DE AMBIENTE
+## 24. VARIÁVEIS DE AMBIENTE
 
 As variáveis de ambiente necessárias estão documentadas em:
 
@@ -753,10 +835,15 @@ MINIO_SECRET_KEY
 MINIO_BUCKET
 MINIO_REGION
 
+STRIPE_SECRET_KEY
+STRIPE_PRICE_ID
+STRIPE_WEBHOOK_SECRET
+APP_URL
+
 Os valores reais das credenciais não devem ser armazenados no GitHub.
 
 
-## 24. ESTRUTURA DO PROJETO
+## 25. ESTRUTURA DO PROJETO
 
 Estrutura simplificada:
 
@@ -802,7 +889,7 @@ catalogo-de-filmes-cloud-2/
 +-- README.md
 
 
-## 25. EXECUÇÃO LOCAL
+## 26. EXECUÇÃO LOCAL
 
 Requisitos:
 
@@ -845,7 +932,7 @@ Swagger:
 http://localhost:3000/api/docs
 
 
-## 26. HISTÓRICO DAS ENTREGAS
+## 27. HISTÓRICO DAS ENTREGAS
 
 | Atividade | Data planejada | Data realizada | Situação |
 |---|---|---|---|
@@ -855,11 +942,12 @@ http://localhost:3000/api/docs
 | Controle de acesso por papel — RBAC | 04/09/2026 | 06/09/2026 às 21:37 | Entregue com atraso |
 | Logs e auditoria | 25/09/2026 | 27/09/2026 às 21:39 | Entregue com atraso |
 | Upload e perfil de usuário | 02/10/2026 | 02/10/2026 às 20:22 | Entregue no prazo |
+| Plano Premium com Stripe | Não informado | Em desenvolvimento/documentação | Validar evidências antes de marcar como concluída |
 
-As datas e horários das atividades 2 a 6 foram obtidos a partir do histórico de commits do GitHub, considerando o horário de Brasília (UTC-3).
+As datas e horários das atividades 2 a 6 foram obtidos a partir do histórico de commits do GitHub, considerando o horário de Brasília (UTC-3). A data da Atividade 7 não foi informada neste README.
 
 
-## 27. PRINCIPAIS TECNOLOGIAS
+## 28. PRINCIPAIS TECNOLOGIAS
 
 Desenvolvimento:
 
@@ -878,6 +966,7 @@ Integrações:
 
 - TMDB API
 - MinIO
+- Stripe Checkout
 
 Autenticação e segurança:
 
@@ -910,7 +999,7 @@ Versionamento:
 - GitHub
 
 
-## 28. RESULTADOS
+## 29. RESULTADOS
 
 Ao longo das atividades, o projeto evoluiu de uma aplicação inicial para uma arquitetura composta por serviços com responsabilidades separadas.
 
@@ -933,12 +1022,13 @@ Foram implementados recursos relacionados a:
 - Métricas
 - Upload de arquivos
 - Perfil de usuário
+- Assinatura Premium e integração com webhook Stripe
 - Armazenamento de objetos
 - Swagger/OpenAPI
 - CI/CD
 
 
-## 29. CONSIDERAÇÕES FINAIS
+## 30. CONSIDERAÇÕES FINAIS
 
 O projeto permitiu aplicar de forma prática diferentes conceitos relacionados ao desenvolvimento de aplicações e à computação em nuvem.
 
@@ -953,7 +1043,7 @@ As dificuldades encontradas durante o desenvolvimento contribuíram para o apren
 O projeto foi estruturado buscando manter os serviços separados, reduzir a exposição de portas, proteger informações sensíveis e centralizar as regras de autenticação e autorização no backend.
 
 
-## 30. INFORMAÇÕES ACADÊMICAS
+## 31. INFORMAÇÕES ACADÊMICAS
 
 Aluna: Joice Soato Brito
 
@@ -981,55 +1071,3 @@ https://github.com/joicesoato/catalogo-de-filmes-cloud-2
 Relatório acadêmico:
 
 ./P1_ISW055_Joice_Soato_Brito.pdf
-
-
-## 8. ATIVIDADE 6 — PERFIL E UPLOAD DE IMAGEM
-
-A aplicação recebe a foto de perfil no endpoint `POST /api/profile/:id/avatar`, no campo multipart `foto`. O backend valida o tipo real e o tamanho do arquivo antes de armazená-lo no MinIO. O navegador não envia o arquivo como JSON e não precisa definir manualmente o cabeçalho `Content-Type`, pois o `FormData` cria o boundary automaticamente.
-
-Para atualizar uma instalação existente, confirme que o MinIO está acessível pela rede interna do Docker e que `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY` e `MINIO_BUCKET` correspondem ao serviço em execução.
-
-## 9. ATIVIDADE 7 — PLANO PREMIUM COM STRIPE
-
-O projeto implementa um checkout de assinatura com Stripe em modo de teste. Os dados do cartão são digitados exclusivamente na página hospedada pelo Stripe; a aplicação não armazena número de cartão, CVV ou validade.
-
-### Configuração do banco
-
-Execute uma vez no banco de dados já utilizado pelo projeto:
-
-```bash
-mysql -h "$DB_HOST" -u "$DB_USER" -p "$DB_NAME" < database/migration-v6.sql
-```
-
-A migração adiciona `premium`, `stripe_customer_id`, `stripe_subscription_id` e `premium_updated_at` à tabela `usuarios`, preservando os usuários existentes.
-
-### Configuração do Stripe em modo de teste
-
-1. Entre no [Dashboard do Stripe](https://dashboard.stripe.com/) e ative **Test mode**.
-2. Em Product catalog, crie o produto **Plano Premium** e um preço recorrente mensal, por exemplo **R$ 9,90/mês**.
-3. Copie o ID do preço, que começa com `price_`.
-4. Em Developers → API keys, copie a chave secreta de teste, que começa com `sk_test_`.
-5. Configure no Portainer/ambiente da aplicação:
-   - `STRIPE_SECRET_KEY`: chave secreta de teste (`sk_test_...`).
-   - `STRIPE_PRICE_ID`: ID do preço recorrente (`price_...`).
-   - `STRIPE_WEBHOOK_SECRET`: segredo de assinatura do webhook (`whsec_...`).
-6. Cadastre um webhook para `https://SEU-DOMINIO/api/stripe/webhook` com os eventos:
-   - `checkout.session.completed`
-   - `checkout.session.async_payment_succeeded`
-   - `customer.subscription.updated`
-   - `customer.subscription.deleted`
-7. Use a chave `whsec_...` fornecida para esse endpoint. Não use a chave de produção nem compartilhe esses segredos publicamente.
-
-Para testar localmente, o Stripe CLI pode encaminhar eventos para `http://localhost:3000/api/stripe/webhook`; use o segredo `whsec_...` informado pelo comando `stripe listen`.
-
-### Fluxo implementado
-
-- `POST /api/premium/checkout`: exige usuário autenticado e cria uma Checkout Session no Stripe.
-- `POST /api/stripe/webhook`: valida a assinatura HMAC do Stripe e só então processa o evento.
-- Após confirmação de pagamento, o usuário recebe `premium = true` e os IDs do cliente/assinatura.
-- Se a assinatura for cancelada ou deixar de estar ativa, o webhook atualiza o status Premium.
-- O perfil mostra o selo **PREMIUM** quando o plano está ativo e oferece o botão para iniciar o checkout a quem ainda não assina.
-
-### Cartão de teste
-
-No modo de teste do Stripe, use o cartão de teste `4242 4242 4242 4242`, uma data futura e qualquer CVC de três dígitos. Não utilize cartões reais. A confirmação do Premium depende da entrega do webhook válido; aguarde alguns segundos e atualize o perfil após finalizar o checkout.
