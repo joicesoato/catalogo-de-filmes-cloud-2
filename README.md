@@ -942,9 +942,9 @@ http://localhost:3000/api/docs
 | Controle de acesso por papel — RBAC | 04/09/2026 | 06/09/2026 às 21:37 | Entregue com atraso |
 | Logs e auditoria | 25/09/2026 | 27/09/2026 às 21:39 | Entregue com atraso |
 | Upload e perfil de usuário | 02/10/2026 | 02/10/2026 às 20:22 | Entregue no prazo |
-| Plano Premium com Stripe | Não informado | Em desenvolvimento/documentação | Validar evidências antes de marcar como concluída |
+| Plano Premium com Stripe | 16/10/2026 | 16/10/2026 | Entregue no dia da entrega |
 
-As datas e horários das atividades 2 a 6 foram obtidos a partir do histórico de commits do GitHub, considerando o horário de Brasília (UTC-3). A data da Atividade 7 não foi informada neste README.
+As datas e horários das atividades 2 a 6 foram obtidos a partir do histórico de commits do GitHub, considerando o horário de Brasília (UTC-3). A Atividade 7 foi registrada como realizada em 16/10/2026, data da entrega.
 
 
 ## 28. PRINCIPAIS TECNOLOGIAS
