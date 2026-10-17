@@ -449,7 +449,7 @@ Para testes locais, o Stripe CLI pode encaminhar eventos para:
 http://localhost:3000/api/stripe/webhook
 ```
 
-Use o segredo exibido pelo comando `stripe listen) no ambiente local. Nunca utilize chaves de produção durante os testes acadêmicos.
+Use o segredo exibido pelo comando `stripe listen` no ambiente local. Nunca utilize chaves de produção durante os testes acadêmicos.
 
 ### 4. Cartão de teste
 
