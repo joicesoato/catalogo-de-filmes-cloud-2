@@ -14,7 +14,7 @@ A aplicação oferece um catálogo de filmes relacionados a Tom Hanks e recursos
 - O sistema valida os campos e o formato do e-mail, verifica se o endereço já está cadastrado e exige senha com pelo menos seis caracteres.
 - A senha é armazenada como hash gerado com bcryptjs, nunca como texto puro.
 - Após o cadastro, o sistema envia uma mensagem para confirmação do e-mail. O token de confirmação tem validade limitada.
-- O login confere a senha e exige que o e-mail esteja confirmado. O serviço de autenticação emite um JWT com validade de oito horas.
+- O login confere a senha e exige que o e-mail esteja confirmado. O serviço de autenticação emite um JWT; a validade deve ser consultada na configuração efetiva do serviço.
 - Existem operações para logout, consulta da sessão/usuário atual e recuperação e redefinição de senha.
 - As rotas sensíveis de autenticação possuem limitação de tentativas.
 
@@ -213,23 +213,15 @@ Os nomes de host usados em URLs internas, como `minio`, `redis` e `auth-service`
 
 ## 7. Classificação SaaS, PaaS e IaaS
 
-A classificação depende de quem administra a infraestrutura e de como o serviço é consumido. Docker e Portainer são ferramentas de conteinerização e gerenciamento; isoladamente, não significam que a aplicação esteja usando um PaaS gerenciado.
+Para esta atividade, a classificação considera o papel de cada camada na implantação do projeto. A classificação pode variar conforme o serviço contratado e o quanto da infraestrutura é administrado pelo provedor.
 
-| Componente | Classificação | Justificativa |
+| Modelo | Aplicação no contexto do projeto | Justificativa |
 |---|---|---|
-| Máquina virtual/servidor de hospedagem | IaaS, quando o provedor entrega infraestrutura virtualizada | A equipe implanta e administra o sistema operacional, containers, rede e serviços. A classificação exata depende do contrato do provedor. |
-| Docker e Docker Compose | Ferramentas de infraestrutura/implantação; não são, por si só, PaaS | Empacotam e executam os serviços, mas a equipe continua responsável pela configuração e operação. |
-| Portainer | Ferramenta de gerenciamento de containers | Administra stacks e containers; não substitui a classificação do serviço de hospedagem subjacente. |
-| Aplicação web, auth-service e log-service | Software desenvolvido pelo projeto | São os componentes da solução executados sobre a infraestrutura; não são serviços SaaS de terceiros apenas por estarem publicados na web. |
-| MariaDB e Redis em containers próprios | Serviços autogerenciados sobre a infraestrutura | A equipe define versão, configuração, persistência, rede e atualização. Se fossem consumidos como serviços gerenciados por um provedor, a classificação poderia mudar. |
-| MinIO em container próprio | Armazenamento de objetos autogerenciado | A equipe administra o container, as credenciais, o bucket e a persistência. Não é um SaaS externo gerenciado no cenário descrito pelo Compose. |
-| Stripe Checkout e webhooks | SaaS | Serviço externo consumido pela aplicação para o fluxo de checkout e notificações de assinatura. |
-| API TMDB | API externa/SaaS consumido pela aplicação | Fornece dados de filmes por meio de uma API hospedada por terceiro. |
-| Provedor SMTP | Serviço externo/SaaS | Envia e-mails transacionais sem a aplicação operar sua própria infraestrutura de entrega de e-mail. |
-| GitHub e GitHub Actions | SaaS | Hospedagem de repositório e execução de automações de CI/CD fornecidas como serviço. |
-| Docker Hub | SaaS | Registro externo utilizado para armazenar/distribuir imagens de containers, quando utilizado no fluxo de publicação. |
+| **IaaS** | Máquina virtual/servidor disponibilizado pela hospedagem | Representa a infraestrutura computacional sobre a qual os serviços são implantados. Quando a equipe administra o sistema operacional e a execução dos containers, essa responsabilidade permanece com a equipe. |
+| **PaaS (camada de execução da aplicação)** | Containers do catálogo, `auth-service`, `log-service` e serviços de apoio orquestrados por Docker Compose/gerenciados no Portainer | No contexto didático da atividade, essa camada representa o ambiente de execução e gerenciamento dos componentes da aplicação. Tecnicamente, Docker e Portainer são ferramentas de conteinerização e gerenciamento; não constituem, por si só, um PaaS totalmente gerenciado pelo provedor. |
+| **SaaS** | Stripe Checkout, API TMDB, provedor SMTP, GitHub/GitHub Actions e Docker Hub | Serviços externos consumidos pela aplicação ou pela equipe sem precisar desenvolver e operar internamente toda a plataforma oferecida por eles. |
 
-**Observação:** o projeto não declara, no Compose consultado, uma plataforma PaaS gerenciada específica para executar o backend. Portanto, não é correto classificar automaticamente o Docker ou o Portainer como PaaS. O modelo de serviço da hospedagem deve ser descrito conforme o que o provedor realmente entrega.
+MariaDB, Redis e MinIO são executados como serviços autogerenciados em containers no Compose. Portanto, neste repositório, não devem ser descritos como serviços gerenciados por terceiros. A classificação acima segue a perspectiva didática da atividade e explicita a diferença entre a camada de execução do projeto e um PaaS comercial totalmente gerenciado.
 
 ## 8. Segurança e operação
 
