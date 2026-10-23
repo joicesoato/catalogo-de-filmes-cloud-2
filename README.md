@@ -1010,10 +1010,10 @@ A documentação reversa do sistema — especificação funcional, arquitetura, 
 | Modelo | Aplicação no projeto |
 |---|---|
 | **IaaS** | Servidor ou máquina virtual de hospedagem, quando fornecido como infraestrutura virtualizada e administrado pela equipe. |
-| **PaaS** | Não há, no Compose atual, indicação de uma plataforma PaaS gerenciada específica. Docker e Portainer são ferramentas de implantação e gerenciamento, não PaaS automaticamente. |
+| **PaaS (camada de execução, na perspectiva didática)** | Ambiente de execução dos containers da aplicação: catálogo, `auth-service`, `log-service` e serviços de apoio gerenciados com Docker Compose/Portainer. |
 | **SaaS / APIs externas** | Stripe Checkout, API TMDB, provedor SMTP, GitHub/GitHub Actions e Docker Hub, consumidos como serviços externos. |
 
-MariaDB, Redis e MinIO são executados como serviços autogerenciados em containers no Compose. A classificação da hospedagem deve refletir o serviço realmente fornecido pelo provedor.
+**Nota técnica:** Docker e Portainer são ferramentas de conteinerização e gerenciamento; isoladamente, não equivalem a um PaaS totalmente gerenciado por um provedor. MariaDB, Redis e MinIO são autogerenciados em containers. A classificação considera a camada de execução como PaaS para fins didáticos e distingue isso de uma oferta comercial gerenciada.
 
 Professor: [Prof. Allan Lincoln Rodrigues Siriani](https://github.com/siriani)
 
