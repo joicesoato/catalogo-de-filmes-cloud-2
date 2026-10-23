@@ -999,6 +999,26 @@ Versionamento:
 - GitHub
 
 
+## DOCUMENTAÇÃO TÉCNICA E MODELOS DE SERVIÇO
+
+A documentação reversa do sistema — especificação funcional, arquitetura, regras de negócio, modelo de dados e classificação SaaS/PaaS/IaaS — está disponível em:
+
+[DOCUMENTACAO.md — Documentação técnica do projeto](./DOCUMENTACAO.md)
+
+### Classificação resumida de SaaS, PaaS e IaaS
+
+| Modelo | Aplicação no projeto |
+|---|---|
+| **IaaS** | Servidor ou máquina virtual de hospedagem, quando fornecido como infraestrutura virtualizada e administrado pela equipe. |
+| **PaaS** | Não há, no Compose atual, indicação de uma plataforma PaaS gerenciada específica. Docker e Portainer são ferramentas de implantação e gerenciamento, não PaaS automaticamente. |
+| **SaaS / APIs externas** | Stripe Checkout, API TMDB, provedor SMTP, GitHub/GitHub Actions e Docker Hub, consumidos como serviços externos. |
+
+MariaDB, Redis e MinIO são executados como serviços autogerenciados em containers no Compose. A classificação da hospedagem deve refletir o serviço realmente fornecido pelo provedor.
+
+Professor: [Prof. Allan Lincoln Rodrigues Siriani](https://github.com/siriani)
+
+---
+
 ## 29. RESULTADOS
 
 Ao longo das atividades, o projeto evoluiu de uma aplicação inicial para uma arquitetura composta por serviços com responsabilidades separadas.
